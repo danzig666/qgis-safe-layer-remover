@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+dist/
+qgis_safe_layer_remover_terv.md

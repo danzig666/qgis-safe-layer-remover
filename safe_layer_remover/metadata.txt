@@ -1,0 +1,18 @@
+[general]
+name=Safe Layer Remover (Biztonságos rétegtörlés)
+qgisMinimumVersion=3.34
+qgisMaximumVersion=4.99
+supportsQt6=True
+description=Remove layers from the project without breaking any other layer. / Rétegek törlése a projektből úgy, hogy egyetlen más réteg se romoljon el.
+about=Maps the dependencies between layers (joins, virtual layers, relations, value relations, expressions, group layers, print layouts etc.), marks layers that cannot be removed safely in red together with the reason, and only allows removing safe layers, with a recycle bin and undo. English and Hungarian user interface (follows the QGIS language). / Feltérképezi a rétegek közötti függőségeket (join, virtuális réteg, kapcsolat, értékreláció, kifejezések, csoportréteg stb.), pirossal jelöli a nem törölhető rétegeket az okkal együtt, és csak a biztonságos rétegek csoportos törlését engedi. Lomtárral és visszavonással.
+version=1.0.0
+author=Danzig
+email=5346511+danzig666@users.noreply.github.com
+homepage=https://github.com/danzig666/qgis-safe-layer-remover
+repository=https://github.com/danzig666/qgis-safe-layer-remover
+tracker=https://github.com/danzig666/qgis-safe-layer-remover/issues
+category=Layers
+tags=layers,remove,delete,dependencies,join,virtual layer,relations,cleanup
+experimental=False
+icon=icons/icon.png
+changelog=1.0.0 First release.
