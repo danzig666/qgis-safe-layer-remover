@@ -168,6 +168,19 @@ class LayerTreeModel(QStandardItemModel):
         item.setFlags(flags)
 
     # ------------------------------------------------------------------
+    def update_visibility(self, project: QgsProject) -> None:
+        """Refresh only the "visible in the Layers panel" state (names of hidden layers are dimmed)."""
+        root = project.layerTreeRoot()
+        self._guard = True
+        try:
+            for lid, item in self._layer_items.items():
+                node = root.findLayer(lid)
+                visible = node.isVisible() if node is not None else True
+                if item.data(VISIBLE_ROLE) != visible:
+                    item.setData(visible, VISIBLE_ROLE)
+        finally:
+            self._guard = False
+
     def layer_item(self, layer_id: str) -> Optional[QStandardItem]:
         return self._layer_items.get(layer_id)
 

@@ -64,19 +64,26 @@ class LayerRemover:
     def project(self) -> QgsProject:
         return self._project or QgsProject.instance()
 
-    def recheck(self, layer_ids) -> tuple[bool, SetResult, AnalysisResult]:
-        """Collect the dependencies again (the per-layer caches follow the layer changes) and evaluate."""
-        analysis = self.analyzer.run(force=True)
+    def recheck(self, layer_ids, force: bool = False) -> tuple[bool, SetResult, AnalysisResult]:
+        """Evaluate the set on a current analysis.
+
+        force=True collects the dependencies again unconditionally; otherwise the analyzer collects
+        only when a tracked change happened since the last collection.
+        """
+        analysis = self.analyzer.run(force=force)
         res = analysis.evaluate(set(layer_ids))
         return res.is_safe(analysis.settings.get("uncertain_is_blocked", True)), res, analysis
 
-    def remove(self, layer_ids, options: Optional[RemovalOptions] = None) -> RemovalOutcome:
+    def remove(self, layer_ids, options: Optional[RemovalOptions] = None,
+               force_recheck: bool = True) -> RemovalOutcome:
+        """Re-check, snapshot and remove. force_recheck=False trusts the change tracking of a caller
+        that has just run a forced check itself (the plugin window)."""
         options = options or RemovalOptions()
         ids = [lid for lid in dict.fromkeys(layer_ids)]
         if not ids:
             return RemovalOutcome(ok=False, aborted=True, message=tr("Nincs kijelölt réteg."))
 
-        safe, res, analysis = self.recheck(ids)
+        safe, res, analysis = self.recheck(ids, force=force_recheck)
         if not safe:
             return RemovalOutcome(
                 ok=False, aborted=True, analysis=analysis, set_result=res,

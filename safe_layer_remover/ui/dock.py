@@ -86,7 +86,9 @@ def _theme_icon(*names):
 
 
 GEOMETRY_KEY = "SafeLayerRemover/windowGeometry"
-SPLITTER_KEY = "SafeLayerRemover/splitterState"
+# v2: the details panel became much smaller by default; older saved sizes are not reused
+SPLITTER_KEY = "SafeLayerRemover/splitterStateV2"
+DETAILS_DEFAULT_HEIGHT = 180
 HEADER_KEY = "SafeLayerRemover/headerState"
 HEADER_MANUAL_KEY = "SafeLayerRemover/headerResizedByUser"
 
@@ -260,8 +262,9 @@ class SafeLayerRemoverWindow(QWidget):
         self.detail.locateRequested.connect(self.locate_in_layer_tree)
         self.detail.layoutRequested.connect(self.open_layout)
         self.splitter.addWidget(self.detail)
-        self.splitter.setStretchFactor(0, 3)
-        self.splitter.setStretchFactor(1, 2)
+        # extra height goes to the layer list; the details panel keeps a modest size
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 0)
         lt.addWidget(self.splitter, 1)
 
         self.selection_label = QLabel()
@@ -353,8 +356,9 @@ class SafeLayerRemoverWindow(QWidget):
                 center = parent.frameGeometry().center()
                 self.move(center.x() - self.width() // 2, center.y() - self.height() // 2)
         splitter = s.value(SPLITTER_KEY, None)
-        if isinstance(splitter, QByteArray) and not splitter.isEmpty():
-            self.splitter.restoreState(splitter)
+        if not (isinstance(splitter, QByteArray) and not splitter.isEmpty() and self.splitter.restoreState(splitter)):
+            total = max(self.height() - 220, 400)
+            self.splitter.setSizes([max(total - DETAILS_DEFAULT_HEIGHT, 200), DETAILS_DEFAULT_HEIGHT])
         header = s.value(HEADER_KEY, None)
         manual = str(s.value(HEADER_MANUAL_KEY, False)).lower() in ("true", "1")
         if manual and isinstance(header, QByteArray) and not header.isEmpty():
@@ -816,17 +820,25 @@ class SafeLayerRemoverWindow(QWidget):
 
     # ------------------------------------------------------------------ personal locks
     def selected_layer_ids(self) -> list[str]:
-        """Layer ids of the selected rows; a selected group stands for every layer below it."""
+        """Layer ids of the selected rows; a selected group stands for every *visible* layer below it.
+
+        Layers hidden by the active filters are never included: what you act on is what you see.
+        """
         ids: list[str] = []
+
+        def visible_below(parent: QModelIndex):
+            for row in range(self.proxy.rowCount(parent)):
+                idx = self.proxy.index(row, COL_NAME, parent)
+                lid = idx.data(LAYER_ID_ROLE)
+                if lid:
+                    ids.append(lid)
+                visible_below(idx)
+
         for proxy_idx in self.view.selectionModel().selectedRows(COL_NAME):
-            src = self.proxy.mapToSource(proxy_idx)
-            item = self.model.itemFromIndex(src)
-            if item is None:
-                continue
-            if item.data(IS_GROUP_ROLE):
-                ids.extend(child.data(LAYER_ID_ROLE) for child in self.model._descendant_layers(item))  # noqa: SLF001
-            elif item.data(LAYER_ID_ROLE):
-                ids.append(item.data(LAYER_ID_ROLE))
+            if proxy_idx.data(IS_GROUP_ROLE):
+                visible_below(proxy_idx)
+            elif proxy_idx.data(LAYER_ID_ROLE):
+                ids.append(proxy_idx.data(LAYER_ID_ROLE))
         return list(dict.fromkeys(i for i in ids if i))
 
     def _add_mark_actions(self, menu: QMenu, layer_ids: list[str]) -> None:
@@ -937,7 +949,8 @@ class SafeLayerRemoverWindow(QWidget):
 
     def request_delete(self, ids: list[str], chain_root: Optional[str] = None) -> bool:
         """Full removal flow: re-check, unsaved edits, confirmation, recycle bin, removal, undo."""
-        ok, res, analysis = self.remover.recheck(ids)
+        # one forced collection; the later checks only collect again if something changed meanwhile
+        ok, res, analysis = self.remover.recheck(ids, force=True)
         if not ok:
             self.refresh()
             self.model.set_checked(ids, True)
@@ -965,7 +978,7 @@ class SafeLayerRemoverWindow(QWidget):
 
         self.own_removal = True
         try:
-            outcome = self.remover.remove(ids, options)
+            outcome = self.remover.remove(ids, options, force_recheck=False)
         except Exception as exc:  # noqa: BLE001
             self._push(tr("A törlés sikertelen: {e}").format(e=exc), Qgis.MessageLevel.Critical)
             return False

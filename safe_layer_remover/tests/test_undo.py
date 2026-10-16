@@ -261,6 +261,112 @@ class FilterStaysTest(unittest.TestCase):
             plugin.unload()
 
 
+class ReviewFixesTest(unittest.TestCase):
+    def setUp(self):
+        new_project()
+
+    def tearDown(self):
+        reset_settings()
+
+    def test_group_selection_respects_filter(self):
+        from qgis.core import QgsVectorLayer
+        from qgis.PyQt.QtCore import QItemSelectionModel
+        from safe_layer_remover.ui.dock import UNTOUCHED
+        plugin = start_plugin()
+        try:
+            project = QgsProject.instance()
+            group = project.layerTreeRoot().addGroup("G")
+            free = QgsVectorLayer("?query=SELECT 1 AS id", "free", "virtual")
+            a, b = mk("A", add=False), mk("B", add=False)
+            for lyr in (free, a, b):
+                project.addMapLayer(lyr, False)
+                group.addLayer(lyr)
+            add_join(a, b)                 # B is not removable, so not untouched
+            win = plugin.dock
+            win.refresh()
+            idx = [i for i, (_l, v) in enumerate(win._status_filters) if v == UNTOUCHED][0]  # noqa: SLF001
+            win.status_combo.setCurrentIndex(idx)
+            group_idx = win.proxy.index(0, 0)
+            win.view.selectionModel().select(group_idx, QItemSelectionModel.SelectionFlag.ClearAndSelect
+                                             | QItemSelectionModel.SelectionFlag.Rows)
+            self.assertEqual(set(win.selected_layer_ids()), {free.id(), a.id()})
+        finally:
+            plugin.unload()
+
+    def test_editing_does_not_trigger_collection(self):
+        from qgis.core import QgsFeature
+        from safe_layer_remover.core.model import DepKind
+        plugin = start_plugin()
+        try:
+            an = plugin.analyzer
+            a = mk("A")
+            QApplication.processEvents()
+            an.run()
+            collected = an._collected                      # noqa: SLF001
+            a.startEditing()
+            a.addFeature(QgsFeature(a.fields()))
+            QApplication.processEvents()
+            r = an.run()
+            self.assertIs(an._collected, collected)        # noqa: SLF001
+            self.assertIn(DepKind.UNSAVED_EDITS, {d.kind for d in r.infos[a.id()].result.warnings})
+            a.rollBack()
+            r = an.run()
+            self.assertNotIn(DepKind.UNSAVED_EDITS, {d.kind for d in r.infos[a.id()].result.warnings})
+        finally:
+            plugin.unload()
+
+    def test_new_relation_is_noticed(self):
+        from safe_layer_remover.core.model import Status
+        plugin = start_plugin()
+        try:
+            an = plugin.analyzer
+            child, parent = mk("Child"), mk("Parent")
+            QApplication.processEvents()
+            self.assertNotEqual(an.run().infos[parent.id()].status, Status.BLOCKED)
+            add_relation(child, parent, "rel_new")
+            QApplication.processEvents()
+            self.assertEqual(an.run().infos[parent.id()].status, Status.BLOCKED)
+        finally:
+            plugin.unload()
+
+    def test_undo_puts_removed_group_back_in_place(self):
+        from safe_layer_remover.core.remover import LayerRemover, RemovalOptions
+        from safe_layer_remover.core.analyzer import DependencyAnalyzer
+        project = QgsProject.instance()
+        root = project.layerTreeRoot()
+        for name in ("G1", "G2", "G3"):
+            grp = root.addGroup(name)
+            lyr = mk(f"L_{name}", add=False)
+            project.addMapLayer(lyr, False)
+            grp.addLayer(lyr)
+        target = project.mapLayersByName("L_G2")[0].id()
+        bin_ = RecycleBin(project)
+        remover = LayerRemover(DependencyAnalyzer(project, settings=dict(plugin_settings.DEFAULTS)), bin_)
+        outcome = remover.remove([target], RemovalOptions(use_recycle_bin=True, remove_empty_groups=True))
+        self.assertIsNone(root.findGroup("G2"))
+        bin_.restore([e.entry_id for e in outcome.entries])
+        self.assertEqual([c.name() for c in root.children()], ["G1", "G2", "G3"])
+
+    def test_eviction_keeps_batches_whole(self):
+        bin_ = RecycleBin(QgsProject.instance())
+        bin_.max_entries = 3
+        a, b, c, d = mk("a"), mk("b"), mk("c"), mk("d")
+        bin_.store([a.id(), b.id()])          # batch 1
+        bin_.store([c.id()])                  # batch 2
+        bin_.store([d.id()])                  # batch 3 -> 4 entries, batch 1 goes as a whole
+        self.assertEqual(sorted(e.name for e in bin_.entries), ["c", "d"])
+        bin_.clear()
+
+    def test_confirm_dialog_stays_small_with_many_memory_layers(self):
+        from safe_layer_remover.core.analyzer import DependencyAnalyzer
+        from safe_layer_remover.ui.confirm_dialog import ConfirmDialog
+        layers = [mk(f"{i}. módosítási pont másolata") for i in range(60)]
+        ids = [lyr.id() for lyr in layers]
+        analysis = DependencyAnalyzer(QgsProject.instance(), settings=dict(plugin_settings.DEFAULTS)).run()
+        dlg = ConfirmDialog(ids, analysis.evaluate(set(ids)), analysis)
+        self.assertLess(dlg.sizeHint().height(), 900)
+
+
 class BinLimitTest(unittest.TestCase):
     def setUp(self):
         new_project()

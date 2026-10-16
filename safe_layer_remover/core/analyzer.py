@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional
 
-from qgis.core import QgsMapLayer, QgsProject
+from qgis.core import QgsMapLayer, QgsProject, QgsVectorLayer
 
 from . import settings as plugin_settings
 from .classifier import classify
@@ -15,7 +15,7 @@ from .detectors import ALL_DETECTORS, AnalysisContext
 from .graph import DependencyGraph
 from .locks import locked_ids as user_locked_ids
 from .log import log_info
-from .model import LAYOUT_KINDS, Badge, DepKind, Dependency, LayerInfo, SetResult, Status
+from .model import LAYOUT_KINDS, Badge, Certainty, DepKind, Dependency, LayerInfo, SetResult, Severity, Status
 from .texts import tr
 
 
@@ -159,6 +159,72 @@ class DependencyAnalyzer:
         self.xml_cache.pop(layer_id, None)
         self.derived_cache.pop(layer_id, None)
 
+    @staticmethod
+    def _dependency_fingerprint(project: QgsProject) -> dict:
+        """Project level settings that can carry dependencies, as plain layer id sets."""
+        fp: dict = {}
+        try:
+            fp["relations"] = frozenset((rid, r.referencingLayerId(), r.referencedLayerId())
+                                        for rid, r in project.relationManager().relations().items())
+        except Exception:  # noqa: BLE001
+            fp["relations"] = None
+        try:
+            coll = project.mapThemeCollection()
+            fp["themes"] = {name: frozenset(coll.mapThemeVisibleLayerIds(name)) for name in coll.mapThemes()}
+        except Exception:  # noqa: BLE001
+            fp["themes"] = None
+        try:
+            cfg = project.snappingConfig()
+            individual = frozenset(lyr.id() for lyr, st in cfg.individualLayerSettings().items()
+                                   if lyr is not None and st.enabled())
+            fp["snapping"] = (cfg.enabled(), str(cfg.mode()), individual)
+        except Exception:  # noqa: BLE001
+            fp["snapping"] = None
+        try:
+            fp["avoid"] = frozenset(lyr.id() for lyr in project.avoidIntersectionsLayers() if lyr is not None)
+        except Exception:  # noqa: BLE001
+            fp["avoid"] = None
+        try:
+            provider = project.elevationProperties().terrainProvider()
+            lyr = provider.layer() if provider is not None and hasattr(provider, "layer") else None
+            fp["terrain"] = lyr.id() if lyr is not None else None
+        except Exception:  # noqa: BLE001
+            fp["terrain"] = None
+        return fp
+
+    @staticmethod
+    def _restrict_fingerprint(fp: dict, ids: set) -> dict:
+        """The fingerprint as it looks once the layers outside `ids` are gone."""
+        out = dict(fp)
+        if fp.get("relations") is not None:
+            out["relations"] = frozenset(r for r in fp["relations"] if r[1] in ids and r[2] in ids)
+        if fp.get("themes") is not None:
+            out["themes"] = {k: v & ids for k, v in fp["themes"].items()}
+        if fp.get("snapping") is not None:
+            e, m, s = fp["snapping"]
+            out["snapping"] = (e, m, s & ids)
+        if fp.get("avoid") is not None:
+            out["avoid"] = fp["avoid"] & ids
+        if fp.get("terrain") is not None and fp["terrain"] not in ids:
+            out["terrain"] = None
+        return out
+
+    def dependencies_maybe_changed(self) -> None:
+        """A project level signal arrived. Only collect again if a dependency really changed.
+
+        QGIS emits relation / theme / snapping signals while it removes a layer; those only drop the
+        removed layer, which the fingerprint comparison recognises.
+        """
+        col = self._collected
+        if col is None or col.get("fingerprint") is None:
+            self._stale = True
+            return
+        project = self.project
+        ids = set(project.mapLayers().keys())
+        now = self._restrict_fingerprint(self._dependency_fingerprint(project), ids)
+        if now != self._restrict_fingerprint(col["fingerprint"], ids):
+            self._stale = True
+
     def mark_stale(self) -> None:
         """Something that can add or change a dependency happened: collect again on the next run."""
         self._stale = True
@@ -206,6 +272,7 @@ class DependencyAnalyzer:
             "settings": dict(settings),
             "layout_sig": layout_sig,
             "layer_ids": current,
+            "fingerprint": self._dependency_fingerprint(project),
         }
         self._stale = False
 
@@ -220,6 +287,15 @@ class DependencyAnalyzer:
         ids = set(layers.keys())
         deps = [d for d in col["dependencies"]
                 if d.required_id in ids and (d.dependent_id is None or d.dependent_id in ids)]
+        # live state that changes with every edit, so it is not part of the collection
+        for lid, layer in layers.items():
+            try:
+                if isinstance(layer, QgsVectorLayer) and layer.isEditable() and layer.isModified():
+                    deps.append(Dependency(lid, None, layer.name(), DepKind.UNSAVED_EDITS, Severity.WARN,
+                                           Certainty.HIGH, tr("mentetlen szerkesztések vannak a rétegen"),
+                                           "self_effects"))
+            except RuntimeError:
+                continue
         errors = {k: v for k, v in col["errors"].items() if k in ids}
         user_locked = user_locked_ids(project) & ids
         locked = {lid for lid, lyr in layers.items() if is_locked(lyr, project)} | user_locked

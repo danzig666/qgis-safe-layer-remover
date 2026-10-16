@@ -16,6 +16,8 @@ from qgis.PyQt.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QFrame,
+    QTextBrowser,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -94,9 +96,15 @@ class ConfirmDialog(QDialog):
 
         # warnings grouped
         if set_result.warnings:
-            box = QLabel(self._warnings_html(set_result))
-            box.setWordWrap(True)
-            box.setTextFormat(Qt.TextFormat.RichText)
+            # scrollable and height limited: hundreds of warnings must not push the buttons off screen
+            box = QTextBrowser()
+            box.setHtml(self._warnings_html(set_result))
+            box.setFrameShape(QFrame.Shape.NoFrame)
+            box.setStyleSheet("QTextBrowser { background: transparent; }")
+            box.document().setDocumentMargin(2)
+            box.document().setTextWidth(480)      # the dialog's usual width, to estimate the height
+            doc_height = int(box.document().size().height()) + 10
+            box.setFixedHeight(max(60, min(doc_height, 150)))
             layout.addWidget(box)
 
         note = QLabel(tr("A törlés csak a projektből távolítja el a réteget, az adatforrást nem érinti "
@@ -147,6 +155,11 @@ class ConfirmDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+        # never taller than the screen, so the buttons always stay reachable
+        screen = self.screen() if hasattr(self, "screen") else None
+        if screen is not None:
+            self.setMaximumHeight(int(screen.availableGeometry().height() * 0.9))
+
     def _warnings_html(self, res: SetResult) -> str:
         parts = []
         remaining = list(res.warnings)
@@ -159,10 +172,19 @@ class ConfirmDialog(QDialog):
         if remaining:
             groups.append((tr("Egyéb mellékhatások"), remaining))
         color = text_color(status_color(Status.WARN)).name()
+        compact = {tr("Memóriarétegek adatvesztése"): tr("{n} memóriaréteg adatai elvesznek (a mentés lent "
+                                                         "választható): {l}"),
+                   tr("Mentetlen szerkesztések"): tr("{n} rétegen mentetlen szerkesztések vannak: {l}")}
         for title, items in groups:
-            lines = "".join(f"<li>{_esc(self._warning_line(d))}</li>" for d in items)
-            parts.append(f"<p style='margin:4px 0 0 0'><b style='color:{color}'>⚠ {_esc(title)}</b></p>"
-                         f"<ul style='margin-top:0'>{lines}</ul>")
+            head = f"<p style='margin:4px 0 0 0'><b style='color:{color}'>⚠ {_esc(title)}</b></p>"
+            if title in compact:
+                # one short paragraph with the layer names instead of one long line per layer
+                names = sorted({d.dependent_label for d in items}, key=str.casefold)
+                body = f"<p style='margin:0 0 0 14px'>{_esc(compact[title].format(n=len(names), l=', '.join(names)))}</p>"
+            else:
+                body = "<ul style='margin-top:0'>" + "".join(
+                    f"<li>{_esc(self._warning_line(d))}</li>" for d in items) + "</ul>"
+            parts.append(head + body)
         return "".join(parts)
 
     @staticmethod

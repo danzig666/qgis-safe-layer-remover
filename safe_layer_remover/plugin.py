@@ -72,11 +72,13 @@ class SafeLayerRemoverPlugin:
         self.analyzer = DependencyAnalyzer(iface=self.iface)
         self.recycle_bin = RecycleBin()
         self.recycle_bin.max_entries = plugin_settings.get_int("undo_max_entries")
+        self.recycle_bin.eager_theme_cache = lambda: plugin_settings.get("undo_all_removals")
         self.recycle_bin.start_tracking()
         self.watcher = ProjectWatcher()
         self.watcher.layerDirty.connect(self.analyzer.invalidate)
         self.watcher.layerGone.connect(self.analyzer.forget)
-        self.watcher.dependenciesChanged.connect(self.analyzer.mark_stale)
+        self.watcher.dependenciesChanged.connect(self.analyzer.dependencies_maybe_changed)
+        self.watcher.projectReset.connect(self.analyzer.mark_stale)
 
         from .ui.dock import SafeLayerRemoverWindow
         # a separate (non dockable) window owned by the QGIS main window
@@ -86,6 +88,7 @@ class SafeLayerRemoverPlugin:
         self.dock.visibilityChanged.connect(self._on_dock_visibility)
         self.dock.analysisUpdated.connect(self._update_indicators)
         self.watcher.changed.connect(self._on_project_changed)
+        self.watcher.treeVisibilityChanged.connect(self._on_tree_visibility_changed)
         self._bg_timer = QTimer()
         self._bg_timer.setSingleShot(True)
         self._bg_timer.setInterval(1500)
@@ -187,6 +190,14 @@ class SafeLayerRemoverPlugin:
             self.dock.schedule_refresh()
             if plugin_settings.get("show_tree_indicators"):
                 self._bg_timer.start()   # restarts while the project keeps changing
+
+    def _on_tree_visibility_changed(self) -> None:
+        if self.dock is None:
+            return
+        if self.dock.isVisible():
+            self.dock.model.update_visibility(QgsProject.instance())
+        else:
+            self.dock.schedule_refresh()   # dimmed names are brought up to date when shown
 
     def _background_analysis(self) -> None:
         """Keep the layer tree indicators current even when the dock is hidden."""
@@ -345,7 +356,8 @@ class SafeLayerRemoverPlugin:
         project = QgsProject.instance()
         names = {i: (project.mapLayer(i).name() if project.mapLayer(i) is not None else i) for i in ids}
         broken: list[str] = []
-        user_locked = [i for i in ids if i in locks.locked_ids()]
+        locked_now = locks.locked_ids()
+        user_locked = [i for i in ids if i in locked_now]
         if sentinel:
             try:
                 # 1. the last collected dependencies, when nothing relevant changed since (instant)
@@ -393,12 +405,17 @@ class SafeLayerRemoverPlugin:
         log_info(f"Removal snapshot: {text}")
         QTimer.singleShot(0, lambda: self._sentinel_message(text, batch, problem))
 
+    def _undo_from_message(self, batch_id: str, widget) -> None:
+        if self.dock is None:   # plugin unloaded / reloaded since the message was shown
+            return
+        self.dock._undo(batch_id, widget)  # noqa: SLF001
+
     def _sentinel_message(self, text: str, batch_id: Optional[str], problem: bool = True) -> None:
         bar = self.iface.messageBar()
         widget = bar.createMessage(tr("Biztonságos rétegtörlés"), text)
         if batch_id and self.dock is not None:
             button = QPushButton(tr("Visszaállítás") if problem else tr("Visszavonás"))
-            button.clicked.connect(lambda: self.dock._undo(batch_id, widget))  # noqa: SLF001
+            button.clicked.connect(lambda: self._undo_from_message(batch_id, widget))
             widget.layout().addWidget(button)
         if problem:
             bar.pushWidget(widget, Qgis.MessageLevel.Warning, 0)       # stays until closed

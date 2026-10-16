@@ -20,6 +20,7 @@ class ProjectWatcher(QObject):
     layerDirty = pyqtSignal(str)          # a layer was added or changed: its cached analysis is outdated
     layerGone = pyqtSignal(str)           # a layer was removed: drop its caches (nothing new to analyse)
     dependenciesChanged = pyqtSignal()    # project level change that can add or alter a dependency
+    treeVisibilityChanged = pyqtSignal()  # a Layers panel checkbox was toggled
     projectReset = pyqtSignal()
 
     def __init__(self, project: Optional[QgsProject] = None, parent: Optional[QObject] = None):
@@ -66,9 +67,12 @@ class ProjectWatcher(QObject):
         p = self.project
         c = self._sub_conns
         root = p.layerTreeRoot()
-        for sig in ("addedChildren", "removedChildren", "nameChanged", "visibilityChanged"):
+        for sig in ("addedChildren", "removedChildren", "nameChanged"):
             if hasattr(root, sig):
                 self._connect(c, getattr(root, sig), self.touch)
+        # ticking a checkbox in the Layers panel only changes how names are drawn: no rebuild
+        if hasattr(root, "visibilityChanged"):
+            self._connect(c, root.visibilityChanged, self._on_visibility_changed)
         self._connect(c, p.relationManager().changed, self._dependencies_changed)
         lm = p.layoutManager()
         for sig in ("layoutAdded", "layoutRemoved", "layoutRenamed"):
@@ -120,10 +124,15 @@ class ProjectWatcher(QObject):
             if hasattr(layer, sig):
                 self._connect(store, getattr(layer, sig), dirty)
         if isinstance(layer, QgsVectorLayer):
-            for sig in ("updatedFields", "editingStarted", "editingStopped", "layerModified",
-                        "editFormConfigChanged", "displayExpressionChanged", "mapTipTemplateChanged"):
+            for sig in ("updatedFields", "editFormConfigChanged", "displayExpressionChanged",
+                        "mapTipTemplateChanged"):
                 if hasattr(layer, sig):
                     self._connect(store, getattr(layer, sig), dirty)
+            # editing only changes the layer's own "unsaved edits" state, which the analyzer reads
+            # live: refresh the view, but no new dependency collection
+            for sig in ("editingStarted", "editingStopped", "layerModified"):
+                if hasattr(layer, sig):
+                    self._connect(store, getattr(layer, sig), self.touch)
         self._layer_conns[lid] = store
 
     def _unwatch_layer(self, lid: str) -> None:
@@ -168,6 +177,10 @@ class ProjectWatcher(QObject):
         self.dependenciesChanged.emit()   # immediate: a new project is always a new analysis
         self.touch()
 
+    def _on_visibility_changed(self, *args) -> None:
+        if not self.suspended:
+            self.treeVisibilityChanged.emit()
+
     def _removal_done(self) -> None:
         self._removing = False
 
@@ -181,10 +194,11 @@ class ProjectWatcher(QObject):
         self.touch()
 
     def _flush_dependency_change(self) -> None:
-        pending, removal = self._dep_change_pending, self._removal_seen
+        # always reported; the analyzer compares a fingerprint and ignores what a removal caused
+        pending = self._dep_change_pending
         self._dep_change_pending = False
         self._removal_seen = False
-        if pending and not removal:
+        if pending:
             self.dependenciesChanged.emit()
 
     def _mark_dirty(self, lid: str) -> None:

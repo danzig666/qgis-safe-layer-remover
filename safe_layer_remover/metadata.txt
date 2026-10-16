@@ -5,7 +5,7 @@ qgisMaximumVersion=4.99
 supportsQt6=True
 description=Remove layers from the project without breaking any other layer. / Rétegek törlése a projektből úgy, hogy egyetlen más réteg se romoljon el.
 about=Maps the dependencies between layers (joins, virtual layers, relations, value relations, expressions, group layers, print layouts etc.), marks layers that cannot be removed safely in red together with the reason, and only allows removing safe layers, with a recycle bin and undo. English and Hungarian user interface (follows the QGIS language). / Feltérképezi a rétegek közötti függőségeket (join, virtuális réteg, kapcsolat, értékreláció, kifejezések, csoportréteg stb.), pirossal jelöli a nem törölhető rétegeket az okkal együtt, és csak a biztonságos rétegek csoportos törlését engedi. Lomtárral és visszavonással.
-version=1.3.0
+version=1.3.1
 author=Danzig
 email=5346511+danzig666@users.noreply.github.com
 homepage=https://github.com/danzig666/qgis-safe-layer-remover
@@ -15,7 +15,8 @@ category=Layers
 tags=layers,remove,delete,dependencies,join,virtual layer,relations,cleanup
 experimental=False
 icon=icons/icon.png
-changelog=1.3.0 Shows the saved map themes a layer is visible in (badge and details, can be turned off; information only). Memory layers and map theme members count as untouched. Per-layer snapping is only reported when the project uses it. Empty groups are removed by default.
+changelog=1.3.1 Fixes from a full review: a group selected under an active filter only affects the visible layers; editing no longer triggers a full analysis; one analysis per removal from the window; visibility toggles no longer rebuild the list; real dependency changes made together with a removal are noticed; undo puts removed empty groups back in place; the recycle bin limit drops whole removals; compact confirmation dialog that always fits on screen; smaller details panel.
+ 1.3.0 Shows the saved map themes a layer is visible in (badge and details, can be turned off; information only). Memory layers and map theme members count as untouched. Per-layer snapping is only reported when the project uses it. Empty groups are removed by default.
  1.2.3 Memory layers with a "fid" field (e.g. copied from a GeoPackage) can be saved and removed again; short error messages. The list keeps its filters after locking or any refresh; when the selected layer drops out of the filtered list the next row is selected.
  1.2.2 Removing layers in the Layers panel is no longer slowed down by the plugin: dependencies are collected only when something relevant changes (a removal reuses the last result), layout XML is cached, the Layers panel markers are updated in place.
  1.2.1 Much faster layer removal: the sentinel no longer runs a full analysis for every removal (about 1.9 s -> 0.02 s per removal in a 380 layer project); helper layers never shown in the Layers panel are ignored; faster analysis through per-layer caches.

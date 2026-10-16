@@ -436,4 +436,7 @@ EN: dict[str, str] = {
         "Information only: the layer can still be removed, the theme is kept without it.",
     "Térképtéma-tagság megjelenítése (jelvény és részletek; nem korlátozza a törlést)":
         "Show map theme membership (badge and details; does not restrict removal)",
+    "{n} memóriaréteg adatai elvesznek (a mentés lent választható): {l}":
+        "The data of {n} memory layer(s) is lost (saving can be chosen below): {l}",
+    "{n} rétegen mentetlen szerkesztések vannak: {l}": "{n} layer(s) have unsaved edits: {l}",
 }

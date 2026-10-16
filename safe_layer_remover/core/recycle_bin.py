@@ -66,6 +66,7 @@ class BinEntry:
     qlr_path: str
     group_path: list[str]
     index: int
+    group_indices: list[int] = field(default_factory=list)  # position of each group of group_path
     visible: bool = True
     layer_xml: str = ""
     data_path: Optional[str] = None                  # GeoPackage with the memory layer features
@@ -98,6 +99,17 @@ def group_path_of(node) -> list[str]:
         parent = parent.parent()
     path.reverse()
     return path
+
+
+def group_indices_of(node) -> list[int]:
+    """Index of every group of group_path_of(node) inside its own parent (root first)."""
+    out: list[int] = []
+    group = node.parent() if node is not None else None
+    while group is not None and group.parent() is not None:
+        out.append(group.parent().children().index(group))
+        group = group.parent()
+    out.reverse()
+    return out
 
 
 def write_vector_copy(layer: QgsVectorLayer, path: str, layer_name: str = "data") -> tuple[bool, str]:
@@ -164,10 +176,12 @@ class RecycleBin(QObject):
         self.entries: list[BinEntry] = []
         self.max_entries = DEFAULT_MAX_ENTRIES
         # tracking (filled while QGIS is about to remove things)
-        self._pending_positions: dict[str, tuple[list[str], int, bool]] = {}
+        self._pending_positions: dict[str, tuple[list[str], int, bool, list[int]]] = {}
         self._theme_cache: dict[str, list[tuple[str, dict]]] = {}
         self._theme_cache_dirty = False
         self.theme_cache_delay_ms = 1500
+        # whether automatic snapshots are expected (only then is an up to date theme cache worth it)
+        self.eager_theme_cache = lambda: False
         self._theme_timer = QTimer(self)
         self._theme_timer.setSingleShot(True)
         self._theme_timer.timeout.connect(self._rebuild_theme_cache)
@@ -209,6 +223,9 @@ class RecycleBin(QObject):
     def _on_will_remove_children(self, node, index_from: int, index_to: int) -> None:
         """Remember tree positions: the Layers panel removes the node before the layer is removed."""
         try:
+            if self._theme_cache_dirty and self.eager_theme_cache():
+                # the layers are still in the project here: safe moment to refresh the theme cache
+                self._rebuild_theme_cache()
             children = node.children()
             for i in range(index_from, index_to + 1):
                 child = children[i]
@@ -217,7 +234,8 @@ class RecycleBin(QObject):
                     parent = lnode.parent()
                     idx = parent.children().index(lnode) if parent is not None else 0
                     self._pending_positions[lnode.layerId()] = (group_path_of(lnode), idx,
-                                                                lnode.itemVisibilityChecked())
+                                                                lnode.itemVisibilityChecked(),
+                                                                group_indices_of(lnode))
         except Exception as exc:  # noqa: BLE001 - tracking must never break QGIS
             log_warning(f"Layer tree position tracking failed: {exc}")
 
@@ -278,9 +296,10 @@ class RecycleBin(QObject):
                 parent = node.parent()
                 index = parent.children().index(node) if parent is not None else 0
                 visible = node.itemVisibilityChecked()
+                group_indices = group_indices_of(node)
             else:
                 export_nodes = [QgsLayerTreeLayer(layer)]
-                group_path, index, visible = self._pending_positions.get(lid, ([], 0, True))
+                group_path, index, visible, group_indices = self._pending_positions.get(lid, ([], 0, True, []))
             self._pending_positions.pop(lid, None)
             qlr = os.path.join(folder, "layer.qlr")
             res = QgsLayerDefinition.exportLayerDefinition(qlr, export_nodes)
@@ -297,6 +316,7 @@ class RecycleBin(QObject):
                 qlr_path=qlr,
                 group_path=list(group_path),
                 index=index,
+                group_indices=list(group_indices),
                 visible=visible,
                 layer_xml=_layer_xml(layer),
                 is_memory=layer.providerType() == "memory",
@@ -363,23 +383,32 @@ class RecycleBin(QObject):
         entry.themes = list(self._theme_cache.get(lid, []))
 
     def _evict(self) -> None:
+        """Drop the oldest removals, always a whole batch at a time (a half batch cannot be undone well)."""
         limit = max(1, int(self.max_entries or DEFAULT_MAX_ENTRIES))
         while len(self.entries) > limit:
             oldest = min(self.entries, key=lambda e: e.deleted_at)
-            self.entries.remove(oldest)
-            self._delete_files(oldest)
+            newest = max(self.entries, key=lambda e: e.deleted_at)
+            if oldest.batch_id == newest.batch_id:
+                break   # a single removal bigger than the limit is kept whole
+            for entry in [e for e in self.entries if e.batch_id == oldest.batch_id]:
+                self.entries.remove(entry)
+                self._delete_files(entry)
 
     # ------------------------------------------------------------------ restore
-    def _ensure_group(self, path: list[str]) -> QgsLayerTreeGroup:
+    def _ensure_group(self, path: list[str], indices: Optional[list[int]] = None) -> QgsLayerTreeGroup:
+        """Find the group path, recreating missing groups at their original position."""
         group = self.project.layerTreeRoot()
-        for name in path:
+        for level, name in enumerate(path):
             child = None
             for c in group.children():
                 if isinstance(c, QgsLayerTreeGroup) and c.name() == name:
                     child = c
                     break
             if child is None:
-                child = group.addGroup(name)
+                if indices and level < len(indices):
+                    child = group.insertGroup(min(indices[level], len(group.children())), name)
+                else:
+                    child = group.addGroup(name)
             group = child
         return group
 
@@ -418,7 +447,7 @@ class RecycleBin(QObject):
 
     def _restore_layer(self, entry: BinEntry, result: RestoreResult):
         project = self.project
-        group = self._ensure_group(entry.group_path)
+        group = self._ensure_group(entry.group_path, entry.group_indices)
         node = None
         # a) same id from the saved layer XML
         if entry.layer_xml and project.mapLayer(entry.layer_id) is None and hasattr(project, "readLayer"):

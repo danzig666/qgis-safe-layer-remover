@@ -20,9 +20,7 @@ class SelfEffectDetector(BaseDetector):
             out.append(self.dep(lid, None, DepKind.MEMORY_DATA_LOSS, Severity.WARN, Certainty.HIGH,
                                 tr("a memóriaréteg adatai véglegesen elvesznek (felajánljuk a mentést)"), label=name))
         if isinstance(layer, QgsVectorLayer):
-            if layer.isEditable() and layer.isModified():
-                out.append(self.dep(lid, None, DepKind.UNSAVED_EDITS, Severity.WARN, Certainty.HIGH,
-                                    tr("mentetlen szerkesztések vannak a rétegen"), label=name))
+            # unsaved edits are added live by the analyzer (they change with every edit)
             try:
                 if layer.auxiliaryLayer() is not None:
                     out.append(self.dep(lid, None, DepKind.AUXILIARY_STORAGE, Severity.INFO, Certainty.HIGH,
