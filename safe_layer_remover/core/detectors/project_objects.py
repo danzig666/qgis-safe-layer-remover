@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import re
 
-from qgis.core import QgsReadWriteContext
+import xml.etree.ElementTree as ET
+
+from qgis.core import QgsLayoutItemRegistry, QgsReadWriteContext
 from qgis.PyQt.QtXml import QDomDocument
 
 import qgis.core as qcore
@@ -64,42 +66,57 @@ class ProjectObjectDetector(BaseDetector):
         if not hasattr(layout, "items"):
             return out  # e.g. QgsReport: covered by the XML scan
         themes = project.mapThemeCollection()
-        for item in layout.items():
-            cls = type(item).__name__
-            item_name = item.displayName() if hasattr(item, "displayName") else (item.id() if hasattr(item, "id") else cls)
-            item_label = f"{label} / {item_name}"
-            if isinstance(item, qcore.QgsLayoutItemMap):
-                if item.keepLayerSet():
-                    for lyr in item.layers():
-                        if lyr is not None and lyr.id() in ctx.layers_by_id:
-                            out.append(self._mk(lyr.id(), item_label, DepKind.LAYOUT, layout_sev,
-                                                tr("rögzített rétegkészlet"), ref=lname))
-                elif item.followVisibilityPreset() and item.followVisibilityPresetName():
-                    theme = item.followVisibilityPresetName()
-                    if themes.hasMapTheme(theme):
-                        for lid in themes.mapThemeVisibleLayerIds(theme):
-                            if lid in ctx.layers_by_id:
-                                out.append(self._mk(lid, item_label, DepKind.LAYOUT, layout_sev,
-                                                    tr("a térképelem a(z) „{t}” térképtémát követi").format(t=theme),
-                                                    ref=lname))
-                # a live map (neither locked layers nor a followed theme) does not count:
-                # what it shows depends on the current layer tree visibility
-            elif isinstance(item, qcore.QgsLayoutItemLegend):
-                if not item.autoUpdateModel():
-                    try:
-                        ids = item.model().rootGroup().findLayerIds()
-                    except Exception:  # noqa: BLE001
-                        ids = []
-                    for lid in ids:
-                        if lid in ctx.layers_by_id:
-                            out.append(self._mk(lid, item_label, DepKind.LAYOUT, layout_sev,
-                                                tr("jelmagyarázat (kézzel szerkesztett)"), ref=lname))
+        items = list(layout.items())
+
+        def item_label(item):
+            name = item.displayName() if hasattr(item, "displayName") else type(item).__name__
+            return f"{label} / {name}"
+
+        # 1. map items: only locked layer sets and maps following a theme put layers on the layout.
+        #    A live map shows whatever is visible in the layer tree right now, so it does not count.
+        shown_by_map: dict[str, set[str]] = {}
+        for item in items:
+            if not isinstance(item, qcore.QgsLayoutItemMap):
+                continue
+            ids: set[str] = set()
+            detail = ""
+            if item.keepLayerSet():
+                ids = {lyr.id() for lyr in item.layers() if lyr is not None and lyr.id() in ctx.layers_by_id}
+                detail = tr("rögzített rétegkészlet")
+            elif item.followVisibilityPreset() and item.followVisibilityPresetName():
+                theme = item.followVisibilityPresetName()
+                if themes.hasMapTheme(theme):
+                    ids = {lid for lid in themes.mapThemeVisibleLayerIds(theme) if lid in ctx.layers_by_id}
+                detail = tr("a térképelem a(z) „{t}” térképtémát követi").format(t=theme)
+            shown_by_map[item.uuid()] = ids
+            for lid in sorted(ids):
+                out.append(self._mk(lid, item_label(item), DepKind.LAYOUT, layout_sev, detail, ref=lname))
+
+        # 2. other items
+        for item in items:
+            if isinstance(item, qcore.QgsLayoutItemLegend):
+                # a legend never puts a layer on the layout by itself: a manually edited legend tree
+                # often holds the whole project. Only layers its linked (counted) map shows are listed.
+                if item.autoUpdateModel():
+                    continue
+                linked = item.linkedMap()
+                allowed = shown_by_map.get(linked.uuid(), set()) if linked is not None else set()
+                if not allowed:
+                    continue
+                try:
+                    ids = item.model().rootGroup().findLayerIds()
+                except Exception:  # noqa: BLE001
+                    ids = []
+                for lid in ids:
+                    if lid in allowed:
+                        out.append(self._mk(lid, item_label(item), DepKind.LAYOUT, layout_sev,
+                                            tr("jelmagyarázat (kézzel szerkesztett)"), ref=lname))
             elif hasattr(qcore, "QgsLayoutItemElevationProfile") and isinstance(item, qcore.QgsLayoutItemElevationProfile):
                 # VERIFY: QgsLayoutItemElevationProfile.layers() (QGIS >= 3.30)
                 if hasattr(item, "layers"):
                     for lyr in item.layers():
                         if lyr is not None and lyr.id() in ctx.layers_by_id:
-                            out.append(self._mk(lyr.id(), item_label, DepKind.LAYOUT, layout_sev,
+                            out.append(self._mk(lyr.id(), item_label(item), DepKind.LAYOUT, layout_sev,
                                                 tr("magassági profil"), ref=lname))
         if hasattr(layout, "multiFrames"):
             for frame in layout.multiFrames():
@@ -119,11 +136,40 @@ class ProjectObjectDetector(BaseDetector):
 
     @staticmethod
     def _xml_ids(layout, ctx) -> set[str]:
+        """Layer ids in the layout XML outside the parts analysed above.
+
+        Skipped: custom properties (other plugins often store whole layer lists there), and the
+        map / legend / elevation profile items, which are handled item by item.
+        """
         doc = QDomDocument("qgis")
         el = layout.writeXml(doc, QgsReadWriteContext())
         doc.appendChild(el)
-        tokens = set(_TOKEN_RE.findall(doc.toString()))
-        return tokens & set(ctx.layers_by_id)
+        try:
+            root = ET.fromstring(doc.toString().encode("utf-8"))
+        except ET.ParseError:
+            tokens = set(_TOKEN_RE.findall(doc.toString()))
+            return tokens & set(ctx.layers_by_id)
+        skip_types = set()
+        for name in ("LayoutMap", "LayoutLegend", "LayoutElevationProfile"):
+            value = getattr(QgsLayoutItemRegistry.ItemType, name, None)
+            if value is not None:
+                skip_types.add(str(int(value)))
+        ids = set(ctx.layers_by_id)
+        found: set[str] = set()
+
+        def visit(node):
+            if node.tag == "customproperties":
+                return
+            if node.tag == "LayoutItem" and node.get("type") in skip_types:
+                return
+            for value in list(node.attrib.values()) + [node.text or ""]:
+                if value:
+                    found.update(set(_TOKEN_RE.findall(value)) & ids)
+            for child in node:
+                visit(child)
+
+        visit(root)
+        return found
 
     # ------------------------------------------------------------------
     def _map_themes(self, project, ctx):

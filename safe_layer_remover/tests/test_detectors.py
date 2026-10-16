@@ -279,6 +279,41 @@ class DetectorTest(unittest.TestCase):
         self.assertEqual(r2.infos[a.id()].status, Status.BLOCKED)
         self.assertNotEqual(r2.infos[b.id()].status, Status.BLOCKED)
 
+    def test_layout_legend_and_custom_properties_do_not_count(self):
+        from qgis.core import QgsLayoutItemLegend, QgsLayoutItemMap, QgsMapThemeCollection
+        a, b, c = mk("A"), mk("B"), mk("C")
+        project = QgsProject.instance()
+        state = QgsMapThemeCollection.MapThemeRecord()
+        state.setLayerRecords([QgsMapThemeCollection.MapThemeLayerRecord(a)])
+        project.mapThemeCollection().insert("Csak A", state)
+
+        layout = QgsPrintLayout(project)
+        layout.initializeDefaults()
+        layout.setName("Terv")
+        themed = QgsLayoutItemMap(layout)
+        themed.setFollowVisibilityPreset(True)
+        themed.setFollowVisibilityPresetName("Csak A")
+        layout.addLayoutItem(themed)
+        # manually edited legend linked to the themed map, holding every layer
+        linked = QgsLayoutItemLegend(layout)
+        linked.setLinkedMap(themed)
+        linked.setAutoUpdateModel(False)
+        layout.addLayoutItem(linked)
+        # manually edited legend without a map, holding every layer
+        loose = QgsLayoutItemLegend(layout)
+        loose.setAutoUpdateModel(False)
+        layout.addLayoutItem(loose)
+        # another plugin stores layer ids in the layout's custom properties
+        layout.setCustomProperty("otherplugin/layers", [b.id(), c.id()])
+        project.layoutManager().addLayout(layout)
+
+        r = analyze()
+        self.assertEqual({d.object_ref for d in r.infos[a.id()].layout_uses}, {"Terv"})
+        self.assertEqual(r.infos[b.id()].layout_uses, [])
+        self.assertEqual(r.infos[c.id()].layout_uses, [])
+        details = {d.detail for d in r.infos[a.id()].layout_uses}
+        self.assertIn("jelmagyarázat (kézzel szerkesztett)", details)
+
     def test_untouched(self):
         from qgis.core import QgsLayoutItemMap, QgsMapThemeCollection
         project = QgsProject.instance()
