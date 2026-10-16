@@ -335,9 +335,8 @@ EN: dict[str, str] = {
     "Csak nem törölhetők": "Not removable only",
     "Csak érintetlenek": "Untouched only",
     "Csak érintetlenek ({n})": "Untouched only ({n})",
-    "Csak azok a rétegek, amelyek törlése semmit nem érint: nem függ tőlük réteg, nincs figyelmeztetésük, és nem szerepelnek elrendezésen vagy térképtémában.":
-        "Only layers whose removal affects nothing: no layer depends on them, they have no warning, "
-        "and they are not on a layout or in a map theme.",
+    "Csak azok a rétegek, amelyek törlése semmit nem ront el: nem függ tőlük réteg, nem szerepelnek elrendezésen, és nincs rajtuk figyelmeztetés (a memóriarétegek adatai és a térképtémák nem számítanak).":
+        "Only layers whose removal breaks nothing: no layer depends on them, they are not on a layout and have no warning (memory layer data and map themes do not count).",
     "Frissítés (F5)": "Refresh (F5)",
     "Beállítások és riport": "Settings and report",
     "Beállítások…": "Settings…",
@@ -420,13 +419,21 @@ EN: dict[str, str] = {
     "Néhány réteg új azonosítót kapott; az ezekre mutató hivatkozások egy része nem állt vissza.":
         "Some layers got a new id; some references to them were not restored.",
     "Összes érintetlen kijelölése": "Select all untouched",
-    "Bejelöli az összes réteget, amelynek törlése semmit nem érint: nem függ tőle réteg, nincs figyelmeztetése, és nem szerepel elrendezésen vagy térképtémában.":
-        "Marks every layer whose removal affects nothing: no layer depends on it, it has no warning, "
-        "and it is not on a layout or in a map theme.",
+    "Bejelöli az összes réteget, amelynek törlése semmit nem ront el: nem függ tőle réteg, nem szerepel elrendezésen, és nincs rajta figyelmeztetés (a memóriarétegek adatai és a térképtémák nem számítanak).":
+        "Marks every layer whose removal breaks nothing: no layer depends on it, it is not on a layout and has no warning (memory layer data and map themes do not count).",
     "Megjelölés törlésre ({n} réteg)": "Mark for removal ({n} layers)",
     "Törlési jelölés levétele ({n} réteg)": "Unmark ({n} layers)",
     "{n} réteg nem jelölhető meg, mert nem törölhető (a függő rétegekkel együtt a Lánc kijelölése segít).":
         "{n} layer(s) cannot be marked because they cannot be removed (Select chain removes them together "
         "with their dependent layers).",
     "(+{n} hasonló hiba)": "(+{n} similar errors)",
+    # --- map theme membership ----------------------------------------------------
+    "Témában ({n})": "In themes ({n})",
+    "Szerepel ezekben a térképtémákban: {l}": "Visible in these map themes: {l}",
+    "Szerepel ezekben a térképtémákban ({n}):": "Visible in these map themes ({n}):",
+    "a réteg látható a témában": "the layer is visible in the theme",
+    "Ez csak tájékoztatás: a réteg ettől még törölhető, a téma a törlés után nélküle marad meg.":
+        "Information only: the layer can still be removed, the theme is kept without it.",
+    "Térképtéma-tagság megjelenítése (jelvény és részletek; nem korlátozza a törlést)":
+        "Show map theme membership (badge and details; does not restrict removal)",
 }

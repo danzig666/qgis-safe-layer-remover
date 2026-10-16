@@ -21,8 +21,10 @@ layers whose removal doesn't break anything else.
 Indirect effects are followed too: if C uses A and A uses B, removing B breaks C. Several layers can be
 removed together when they only depend on each other ("Select chain").
 
-The "Untouched only" filter lists the layers you can drop without any side effect at all: nothing
-depends on them, they are not on a layout or in a map theme, and they hold no unsaved or in-memory data.
+The "Untouched only" filter lists the layers you can drop without breaking anything: nothing depends
+on them, they are not on a layout and they have no unsaved edits. Memory layers count as untouched too
+(saving their data is offered when you remove them), and so do layers that are only part of map themes.
+The map themes a layer is visible in are shown as a badge and in the details; this can be turned off.
 
 You can also lock layers yourself (right click › Lock, the Lock button or Ctrl+L, also in the Layers
 panel context menu). Locked layers get a padlock and can't be removed until you unlock them; the lock

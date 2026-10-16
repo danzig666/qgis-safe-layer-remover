@@ -32,6 +32,7 @@ _LABELS = [
     (tr("Megjelenés"), [
         ("sync_selection", tr("Kijelölés szinkronizálása a QGIS rétegkezelőjével")),
         ("show_info_items", tr("Tájékoztató tételek (térképtémák, illesztés) megjelenítése a részleteknél")),
+        ("show_theme_membership", tr("Térképtéma-tagság megjelenítése (jelvény és részletek; nem korlátozza a törlést)")),
         ("show_tree_indicators", tr("Láncszem jelző a QGIS rétegkezelőjében a függőséggel rendelkező rétegeken")),
         ("sentinel_mode", tr("Őrszem mód: figyelmeztetés és visszaállítás, ha a natív rétegkezelőből "
                              "törölt réteg mást elrontott")),

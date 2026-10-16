@@ -114,7 +114,8 @@ class DetailPanel(QWidget):
             item.setFirstColumnSpanned(True)   # one line message across all columns
         return item
 
-    def show_layer(self, info: LayerInfo, analysis: AnalysisResult, show_info_items: bool = False) -> None:
+    def show_layer(self, info: LayerInfo, analysis: AnalysisResult, show_info_items: bool = False,
+                   show_themes: bool = True) -> None:
         self.tree.clear()
         self._layer_id = info.layer_id
         self.title.setText(tr("Részletek: {n} – {s}").format(n=info.name, s=status_label(info.status)))
@@ -161,7 +162,8 @@ class DetailPanel(QWidget):
                 for d in warnings:
                     self._row([d.dependent_label, kind_label(d.kind), d.detail], Status.WARN,
                               d.dependent_id, object_long(d))
-            infos = [d for d in res.infos if d.kind.value not in LAYOUT_KINDS]
+            infos = [d for d in res.infos if d.kind.value not in LAYOUT_KINDS
+                     and not (show_themes and d.kind.value == "map_theme")]
             if show_info_items and infos:
                 self._section(tr("Tájékoztatás:"))
                 for d in infos:
@@ -176,6 +178,13 @@ class DetailPanel(QWidget):
                 row = self._row([d.object_ref or d.dependent_label, item_part, d.detail], st,
                                 tooltip=tr("Dupla kattintás: az elrendezés megnyitása"))
                 row.setData(0, LAYOUT_ROLE, d.object_ref)
+
+        if show_themes and info.themes:
+            self._section(tr("Szerepel ezekben a térképtémákban ({n}):").format(n=len(info.themes)))
+            for theme in info.themes:
+                self._row([theme, tr("térképtéma"), tr("a réteg látható a témában")], None,
+                          tooltip=tr("Ez csak tájékoztatás: a réteg ettől még törölhető, a téma a törlés után "
+                                     "nélküle marad meg."))
 
         deps = [d for d in info.depends_on if d.required_id in analysis.infos]
         if deps:

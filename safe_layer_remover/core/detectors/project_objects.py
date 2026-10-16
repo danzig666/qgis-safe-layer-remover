@@ -211,16 +211,27 @@ class ProjectObjectDetector(BaseDetector):
         for theme in coll.mapThemes():
             label = tr("Térképtéma: {n}").format(n=theme)
             for record in coll.mapThemeState(theme).layerRecords():
+                # newer QGIS versions also keep records of layers hidden in the theme
+                if not getattr(record, "isVisible", True):
+                    continue
                 lyr = record.layer()
                 if lyr is not None and lyr.id() in ctx.layers_by_id:
-                    out.append(self._mk(lyr.id(), label, DepKind.MAP_THEME, Severity.INFO, tr("a téma tartalmazza")))
+                    out.append(self._mk(lyr.id(), label, DepKind.MAP_THEME, Severity.INFO,
+                                        tr("a téma tartalmazza"), ref=theme))
         return out
 
     def _snapping(self, project, ctx):
         out = []
         cfg = project.snappingConfig()
+        individual = {}
         try:
-            individual = cfg.individualLayerSettings()
+            # QGIS keeps a default per-layer entry for every vector layer; it only matters when
+            # snapping is on and uses the per-layer ("advanced") configuration
+            advanced = getattr(getattr(qcore.Qgis, "SnappingMode", None), "AdvancedConfiguration", None)
+            if advanced is None:
+                advanced = getattr(qcore.QgsSnappingConfig, "AdvancedConfiguration", None)
+            if cfg.enabled() and advanced is not None and cfg.mode() == advanced:
+                individual = cfg.individualLayerSettings()
         except Exception:  # noqa: BLE001
             individual = {}
         for lyr, settings in individual.items():

@@ -299,7 +299,7 @@ class WindowTest(unittest.TestCase):
             add_join(a, b)                     # B cannot be removed alone, A is a memory layer (warning)
             win.refresh()
             win.select_all_button.click()
-            self.assertEqual(win.model.checked_ids(), {free.id()})   # only untouched layers
+            self.assertEqual(win.model.checked_ids(), {free.id(), a.id()})   # untouched: free and memory layer A
             win.model.clear_checks()
             win.mark_for_removal([a.id(), b.id(), free.id()], True)
             self.assertEqual(win.model.checked_ids(), {a.id(), free.id()})  # B skipped

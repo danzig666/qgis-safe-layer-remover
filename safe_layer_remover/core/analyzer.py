@@ -15,7 +15,7 @@ from .detectors import ALL_DETECTORS, AnalysisContext
 from .graph import DependencyGraph
 from .locks import locked_ids as user_locked_ids
 from .log import log_info
-from .model import LAYOUT_KINDS, Badge, Dependency, LayerInfo, SetResult, Status
+from .model import LAYOUT_KINDS, Badge, DepKind, Dependency, LayerInfo, SetResult, Status
 from .texts import tr
 
 
@@ -300,6 +300,12 @@ class DependencyAnalyzer:
             if layout_names:
                 badges.insert(1, Badge(tr("Elrendezésen ({n})").format(n=len(layout_names)), "indigo", False,
                                        tr("Megjelenik ezeken az elrendezéseken: {l}").format(l=", ".join(layout_names))))
+            themes = sorted({d.object_ref or d.dependent_label for d in graph.by_required.get(lid, ())
+                             if d.kind == DepKind.MAP_THEME}, key=str.casefold)
+            if themes and settings.get("show_theme_membership", True):
+                badges.insert(2 if layout_names else 1,
+                              Badge(tr("Témában ({n})").format(n=len(themes)), "teal", False,
+                                    tr("Szerepel ezekben a térképtémákban: {l}").format(l=", ".join(themes))))
             info = LayerInfo(
                 layer_id=lid,
                 name=layer.name(),
@@ -313,6 +319,7 @@ class DependencyAnalyzer:
                 closure=graph.closure(lid),
                 layout_uses=layout_uses,
                 user_locked=lid in user_locked,
+                themes=themes,
             )
             result.infos[lid] = info
 

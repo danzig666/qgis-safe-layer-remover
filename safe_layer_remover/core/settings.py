@@ -16,6 +16,7 @@ DEFAULTS: dict[str, bool] = {
     "remove_empty_groups": True,
     "sync_selection": True,
     "show_info_items": False,
+    "show_theme_membership": True,
     "show_tree_indicators": True,
     "sentinel_mode": True,
     "undo_all_removals": False,

@@ -81,6 +81,8 @@ def layer_tooltip(info: LayerInfo, analysis: AnalysisResult) -> str:
             lines.append(html.escape(tr("Egyéb hatás:")))
             for d in res.warnings:
                 lines.append("• " + html.escape(object_long(d)))
+    if info.themes and analysis.settings.get("show_theme_membership", True):
+        lines.append(html.escape(tr("Szerepel ezekben a térképtémákban: {l}").format(l=", ".join(info.themes))))
     return "<br>".join(lines)
 
 

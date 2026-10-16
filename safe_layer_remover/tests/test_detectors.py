@@ -360,7 +360,39 @@ class DetectorTest(unittest.TestCase):
         r = analyze()
         got = {r.infos[lyr.id()].name for lyr in (free, used, on_layout, in_theme, mem, dep)
                if r.infos[lyr.id()].untouched}
-        self.assertEqual(got, {"free", "dep"})
+        # memory layers (data loss is not a restriction) and map theme members count as untouched
+        self.assertEqual(got, {"free", "dep", "mem", "theme"})
+
+    def test_memory_layer_with_unsaved_edits_is_not_untouched(self):
+        a = mk("A")
+        self.assertTrue(analyze().infos[a.id()].untouched)
+        a.startEditing()
+        from qgis.core import QgsFeature
+        a.addFeature(QgsFeature(a.fields()))
+        self.assertFalse(analyze().infos[a.id()].untouched)
+        a.rollBack()
+
+    def test_theme_membership_shown_not_restricting(self):
+        from qgis.core import QgsMapThemeCollection
+        a, b = mk("A"), mk("B")
+        coll = QgsProject.instance().mapThemeCollection()
+        visible = QgsMapThemeCollection.MapThemeRecord()
+        visible.setLayerRecords([QgsMapThemeCollection.MapThemeLayerRecord(a)])
+        coll.insert("Zöld téma", visible)
+        coll.insert("Alap", visible)
+        rec_b = QgsMapThemeCollection.MapThemeLayerRecord(b)
+        if hasattr(rec_b, "isVisible"):
+            rec_b.isVisible = False                     # B is only listed as hidden
+            hidden = QgsMapThemeCollection.MapThemeRecord()
+            hidden.setLayerRecords([rec_b])
+            coll.insert("Rejtett", hidden)
+        r = analyze()
+        self.assertEqual(r.infos[a.id()].themes, ["Alap", "Zöld téma"])
+        self.assertEqual(r.infos[b.id()].themes, [])
+        self.assertIn("Témában (2)", [bd.text for bd in r.infos[a.id()].badges])
+        self.assertTrue(r.is_safe({a.id()}))            # information only
+        r2 = analyze(show_theme_membership=False)
+        self.assertNotIn("Témában (2)", [bd.text for bd in r2.infos[a.id()].badges])
 
     def test_memory_layer_warn(self):
         a = mk("A")

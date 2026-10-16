@@ -66,11 +66,11 @@ class PluginTest(unittest.TestCase):
             win.refresh()
             idx = [i for i, (_l, v) in enumerate(win._status_filters) if v == UNTOUCHED][0]
             win.status_combo.setCurrentIndex(idx)
-            self.assertIn("(1)", win.status_combo.itemText(idx))
+            self.assertIn("(2)", win.status_combo.itemText(idx))   # free + A (memory layer, nothing depends on it)
             visible = []
             for row in range(win.proxy.rowCount()):
                 visible.append(win.proxy.index(row, 0).data(LAYER_ID_ROLE))
-            self.assertEqual(visible, [free.id()])
+            self.assertEqual(set(visible), {free.id(), a.id()})
             win.status_combo.setCurrentIndex(0)
             self.assertEqual(win.proxy.rowCount(), 3)
         finally:

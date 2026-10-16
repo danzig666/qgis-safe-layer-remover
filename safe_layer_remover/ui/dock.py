@@ -270,9 +270,10 @@ class SafeLayerRemoverWindow(QWidget):
 
         buttons = QHBoxLayout()
         self.select_all_button = QPushButton(tr("Összes érintetlen kijelölése"))
-        self.select_all_button.setToolTip(tr("Bejelöli az összes réteget, amelynek törlése semmit nem érint: nem függ "
-                                             "tőle réteg, nincs figyelmeztetése, és nem szerepel elrendezésen vagy "
-                                             "térképtémában."))
+        self.select_all_button.setToolTip(tr("Bejelöli az összes réteget, amelynek törlése semmit nem ront el: nem "
+                                             "függ tőle réteg, nem szerepel elrendezésen, és nincs rajta "
+                                             "figyelmeztetés (a memóriarétegek adatai és a térképtémák nem "
+                                             "számítanak)."))
         self.select_all_button.clicked.connect(self.model.check_all_untouched)
         self.clear_button = QPushButton(tr("Kijelölés törlése"))
         self.clear_button.clicked.connect(self._clear_checks)
@@ -515,8 +516,9 @@ class SafeLayerRemoverWindow(QWidget):
             if value == UNTOUCHED:
                 self.status_combo.setItemText(i, tr("Csak érintetlenek ({n})").format(n=n_untouched))
                 self.status_combo.setItemData(
-                    i, tr("Csak azok a rétegek, amelyek törlése semmit nem érint: nem függ tőlük réteg, "
-                          "nincs figyelmeztetésük, és nem szerepelnek elrendezésen vagy térképtémában."),
+                    i, tr("Csak azok a rétegek, amelyek törlése semmit nem ront el: nem függ tőlük réteg, "
+                          "nem szerepelnek elrendezésen, és nincs rajtuk figyelmeztetés (a memóriarétegek "
+                          "adatai és a térképtémák nem számítanak)."),
                     Qt.ItemDataRole.ToolTipRole)
 
     def _update_error_banner(self) -> None:
@@ -655,7 +657,8 @@ class SafeLayerRemoverWindow(QWidget):
         if info is None:
             self.detail.clear()
             return
-        self.detail.show_layer(info, self.analysis, self.analysis.settings.get("show_info_items", False))
+        self.detail.show_layer(info, self.analysis, self.analysis.settings.get("show_info_items", False),
+                               self.analysis.settings.get("show_theme_membership", True))
         if self.analysis.settings.get("sync_selection", True):
             self._sync_layer_tree(lid)
 
