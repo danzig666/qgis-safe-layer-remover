@@ -376,4 +376,27 @@ EN: dict[str, str] = {
     "Riport exportálása": "Export report",
     "Riport elmentve: {p}": "Report saved: {p}",
     "A riport mentése sikertelen: {e}": "Saving the report failed: {e}",
+
+    # --- personal locks ---------------------------------------------------------
+    "Zárolás": "Lock",
+    "Feloldás": "Unlock",
+    "Zárolás ({n} réteg)": "Lock ({n} layers)",
+    "Feloldás ({n} réteg)": "Unlock ({n} layers)",
+    "{n} réteg zárolva.": "{n} layer(s) locked.",
+    "{n} réteg feloldva.": "{n} layer(s) unlocked.",
+    "Nem lesznek törölhetők, amíg fel nem oldod őket.": "They cannot be removed until you unlock them.",
+    "A kijelölt sorok rétegeinek zárolása: nem lesznek törölhetők (Ctrl+L). Több sor Ctrl vagy Shift kattintással jelölhető ki.":
+        "Lock the layers of the selected rows so they cannot be removed (Ctrl+L). "
+        "Select several rows with Ctrl or Shift click.",
+    "A kijelölt sorok rétegeinek feloldása (Ctrl+L).": "Unlock the layers of the selected rows (Ctrl+L).",
+    "Törlés elleni zárolás be/ki": "Lock / unlock against removal",
+    "A kijelölt rétegek személyes zárolása vagy feloldása (Biztonságos rétegtörlés)":
+        "Lock or unlock the selected layers (Safe Layer Remover)",
+    "Biztonságos rétegtörlés: saját zárolás, a réteg nem törölhető.": "Safe Layer Remover: locked by you, the layer cannot be removed.",
+    "saját zárolás – oldd fel a törléshez": "locked by you – unlock it to remove",
+    "Saját zárolás: a réteget te jelölted meg nem törölhetőként. A Feloldás paranccsal szüntetheted meg.":
+        "Locked by you: you marked this layer as not removable. Use Unlock to release it.",
+    "Saját zárolás: a Feloldás paranccsal (jobb klikk vagy Ctrl+L) szüntethető meg.":
+        "Locked by you: release it with Unlock (right click or Ctrl+L).",
+    "Zárolt réteget töröltél: {l}.": "You removed a locked layer: {l}.",
 }

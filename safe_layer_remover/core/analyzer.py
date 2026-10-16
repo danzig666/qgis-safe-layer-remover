@@ -12,6 +12,7 @@ from . import settings as plugin_settings
 from .classifier import classify
 from .detectors import ALL_DETECTORS, AnalysisContext
 from .graph import DependencyGraph
+from .locks import locked_ids as user_locked_ids
 from .log import log_info
 from .model import LAYOUT_KINDS, Badge, Dependency, LayerInfo, SetResult, Status
 from .texts import tr
@@ -126,7 +127,8 @@ class DependencyAnalyzer:
         # deduplicate identical findings
         unique: list[Dependency] = list(dict.fromkeys(ctx.dependencies))
 
-        locked = {lid for lid, lyr in ctx.layers_by_id.items() if is_locked(lyr, project)}
+        user_locked = user_locked_ids(project) & set(ctx.layers_by_id)
+        locked = {lid for lid, lyr in ctx.layers_by_id.items() if is_locked(lyr, project)} | user_locked
         error_ids = set(ctx.errors.keys())
         if ctx.global_errors:
             error_ids |= set(ctx.layers_by_id)
@@ -178,6 +180,7 @@ class DependencyAnalyzer:
                 result=res,
                 closure=graph.closure(lid),
                 layout_uses=layout_uses,
+                user_locked=lid in user_locked,
             )
             result.infos[lid] = info
 

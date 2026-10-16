@@ -178,10 +178,15 @@ class RecycleBin(QObject):
         by_id = {e.entry_id: e for e in self.entries}
         # restore in original order (lower index first) so positions are reproduced
         todo = sorted((by_id[i] for i in entry_ids if i in by_id), key=lambda e: (len(e.group_path), e.index))
+        from . import locks
+        locked = locks.locked_ids(self.project)
         for entry in todo:
             try:
                 new_id = self._restore_one(entry, result)
                 result.restored.append(new_id)
+                if entry.layer_id in locked:
+                    # keep the personal lock on the restored layer (its id may have changed)
+                    locks.set_locked([new_id], True, self.project)
                 self.entries.remove(entry)
                 self._delete_files(entry)
             except Exception as exc:  # noqa: BLE001

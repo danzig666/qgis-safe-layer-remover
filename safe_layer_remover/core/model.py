@@ -171,6 +171,7 @@ class LayerInfo:
     result: Optional[SetResult] = None
     closure: frozenset[str] = frozenset()
     layout_uses: list[Dependency] = field(default_factory=list)  # layouts the layer appears on
+    user_locked: bool = False      # locked by the user (personal lock stored in the project)
 
     @property
     def untouched(self) -> bool:

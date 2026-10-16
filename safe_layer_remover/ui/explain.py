@@ -41,6 +41,8 @@ def layer_short_reason(info: LayerInfo, analysis: AnalysisResult) -> str:
     if info.status == Status.ERROR:
         return tr("Az elemzés sikertelen")
     if info.status == Status.LOCKED:
+        if info.user_locked:
+            return tr("saját zárolás – oldd fel a törléshez")
         return tr("a réteg zárolt, nem eltávolítható")
     res = info.result
     if res is None:
@@ -59,7 +61,10 @@ def layer_tooltip(info: LayerInfo, analysis: AnalysisResult) -> str:
     if info.error:
         lines.append(html.escape(tr("Az elemzés sikertelen, ezért a réteg nem törölhető:")))
         lines.append(f"<small>{html.escape(info.error)}</small>")
-    if info.status == Status.LOCKED:
+    if info.user_locked:
+        lines.append(html.escape(tr("Saját zárolás: a réteget te jelölted meg nem törölhetőként. "
+                                    "A Feloldás paranccsal szüntetheted meg.")))
+    elif info.status == Status.LOCKED:
         lines.append(html.escape(tr("A réteg a projektben kötelezőként van megjelölve (nem eltávolítható).")))
     res = info.result
     if res is not None:

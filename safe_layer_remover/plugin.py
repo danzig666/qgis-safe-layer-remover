@@ -15,6 +15,7 @@ try:  # Qt6
 except ImportError:  # Qt5
     from qgis.PyQt.QtWidgets import QAction
 
+from .core import locks
 from .core import settings as plugin_settings
 from .core.analyzer import DependencyAnalyzer
 from .core.log import log_info, log_warning
@@ -33,6 +34,7 @@ class SafeLayerRemoverPlugin:
         self.translator: Optional[QTranslator] = None
         self.action: Optional[QAction] = None
         self.tree_action: Optional[QAction] = None
+        self.lock_action: Optional[QAction] = None
         self.dock = None
         self.analyzer: Optional[DependencyAnalyzer] = None
         self.recycle_bin: Optional[RecycleBin] = None
@@ -92,22 +94,29 @@ class SafeLayerRemoverPlugin:
         # "Safe remove" in the layer tree context menu, for every layer type
         self.tree_action = QAction(icon, tr("Biztonságos törlés…"), self.iface.mainWindow())
         self.tree_action.triggered.connect(self._remove_selected_from_layer_tree)
+        from .ui.styles import status_icon
+        self.lock_action = QAction(status_icon(Status.LOCKED), tr("Törlés elleni zárolás be/ki"),
+                                   self.iface.mainWindow())
+        self.lock_action.setToolTip(tr("A kijelölt rétegek személyes zárolása vagy feloldása (Biztonságos rétegtörlés)"))
+        self.lock_action.triggered.connect(self._toggle_lock_from_layer_tree)
         for ltype in self._layer_types():
-            try:
-                self.iface.addCustomActionForLayerType(self.tree_action, "", ltype, True)
-            except Exception:  # noqa: BLE001
-                pass
+            for act in (self.tree_action, self.lock_action):
+                try:
+                    self.iface.addCustomActionForLayerType(act, "", ltype, True)
+                except Exception:  # noqa: BLE001
+                    pass
 
         # initial indicators (cheap: analysis runs only when the project has layers)
         QTimer.singleShot(1500, self._background_analysis)
 
     def unload(self) -> None:
         self._remove_indicators()
-        if self.tree_action is not None:
-            try:
-                self.iface.removeCustomActionForLayerType(self.tree_action)
-            except Exception:  # noqa: BLE001
-                pass
+        for act in (self.tree_action, getattr(self, "lock_action", None)):
+            if act is not None:
+                try:
+                    self.iface.removeCustomActionForLayerType(act)
+                except Exception:  # noqa: BLE001
+                    pass
         for conn in self._project_conns:
             try:
                 QObject.disconnect(conn)
@@ -209,6 +218,19 @@ class SafeLayerRemoverPlugin:
         self.dock.jump_to(ids[0])
         self.dock.request_delete(ids)
 
+    def _toggle_lock_from_layer_tree(self) -> None:
+        view = self.iface.layerTreeView()
+        layers = view.selectedLayers() if view is not None else []
+        ids = [lyr.id() for lyr in layers]
+        if not ids:
+            return
+        locked = locks.locked_ids()
+        lock = not all(i in locked for i in ids)
+        if self.dock is not None:
+            self.dock.set_locked(ids, lock)   # also refreshes the analysis and the indicators
+        else:
+            locks.set_locked(ids, lock)
+
     def _remove_indicators(self) -> None:
         view = self.iface.layerTreeView() if self.iface is not None else None
         for node, indicator in self._indicators:
@@ -237,7 +259,17 @@ class SafeLayerRemoverPlugin:
             from .ui.styles import status_icon
             icon = status_icon(Status.BLOCKED)
         root = QgsProject.instance().layerTreeRoot()
+        from .ui.styles import status_icon
+        lock_icon = status_icon(Status.LOCKED)
         for lid, info in analysis.infos.items():
+            if info.user_locked:
+                node = root.findLayer(lid)
+                if node is not None:
+                    indicator = QgsLayerTreeViewIndicator(view)
+                    indicator.setIcon(lock_icon)
+                    indicator.setToolTip(tr("Biztonságos rétegtörlés: saját zárolás, a réteg nem törölhető."))
+                    view.addIndicator(node, indicator)
+                    self._indicators.append((node, indicator))
             res = info.result
             if res is None or not res.victims:
                 continue
@@ -271,7 +303,8 @@ class SafeLayerRemoverPlugin:
         except Exception as exc:  # noqa: BLE001
             log_warning(f"Sentinel analysis failed: {exc}")
             return
-        if not res.victims and not res.blocking_objects:
+        user_locked = [i for i in ids if i in locks.locked_ids()]
+        if not res.victims and not res.blocking_objects and not user_locked:
             return
         try:
             entries = self.recycle_bin.store(ids)
@@ -284,7 +317,13 @@ class SafeLayerRemoverPlugin:
             broken.append(f"{analysis.name_of(v.layer_id)} ({kind_label(v.chain[-1].kind)})")
         for d in res.blocking_objects:
             broken.append(f"{d.dependent_label} ({kind_label(d.kind)})")
-        text = tr("{r} törlése elrontotta: {b}.").format(r=removed, b=", ".join(broken))
+        if broken:
+            text = tr("{r} törlése elrontotta: {b}.").format(r=removed, b=", ".join(broken))
+        else:
+            text = ""
+        if user_locked:
+            text = (text + " " if text else "") + tr("Zárolt réteget töröltél: {l}.").format(
+                l=", ".join(analysis.name_of(i) for i in user_locked))
         batch = entries[0].batch_id if entries else None
         log_info(f"Sentinel: {text}")
         QTimer.singleShot(0, lambda: self._sentinel_message(text, batch))

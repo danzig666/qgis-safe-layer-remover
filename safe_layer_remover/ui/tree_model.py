@@ -28,6 +28,7 @@ MINI_ICON_ROLE = Qt.ItemDataRole.UserRole + 10
 SEARCH_ROLE = Qt.ItemDataRole.UserRole + 11
 LAYOUTS_ROLE = Qt.ItemDataRole.UserRole + 12
 UNTOUCHED_ROLE = Qt.ItemDataRole.UserRole + 13
+USER_LOCKED_ROLE = Qt.ItemDataRole.UserRole + 14
 
 COL_NAME, COL_TYPE, COL_STATUS = 0, 1, 2
 
@@ -124,6 +125,7 @@ class LayerTreeModel(QStandardItemModel):
         name.setData(info.name, SEARCH_ROLE)
         name.setData(sorted({d.object_ref or d.dependent_label for d in info.layout_uses}), LAYOUTS_ROLE)
         name.setData(info.untouched, UNTOUCHED_ROLE)
+        name.setData(info.user_locked, USER_LOCKED_ROLE)
         mini = provider_mini_icon(layer) if layer is not None else None
         if mini is not None:
             name.setData(mini, MINI_ICON_ROLE)

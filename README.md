@@ -24,6 +24,10 @@ removed together when they only depend on each other ("Select chain").
 The "Untouched only" filter lists the layers you can drop without any side effect at all: nothing
 depends on them, they are not on a layout or in a map theme, and they hold no unsaved or in-memory data.
 
+You can also lock layers yourself (right click › Lock, the Lock button or Ctrl+L, also in the Layers
+panel context menu). Locked layers get a padlock and can't be removed until you unlock them; the lock
+is saved in the project. Select several rows with Ctrl or Shift.
+
 ![Confirmation](docs/confirm.png)
 
 Removed layers go to a recycle bin and can be restored, memory layer data included. If you remove

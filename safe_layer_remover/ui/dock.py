@@ -35,6 +35,7 @@ try:  # Qt6
 except ImportError:  # Qt5
     from qgis.PyQt.QtWidgets import QShortcut
 
+from ..core import locks
 from ..core.analyzer import AnalysisResult, DependencyAnalyzer
 from ..core.log import log_warning
 from ..core.model import Status
@@ -57,6 +58,7 @@ from .tree_model import (
     IS_GROUP_ROLE,
     LAYER_ID_ROLE,
     SUMMARY_ROLE,
+    USER_LOCKED_ROLE,
     LayerTreeModel,
 )
 
@@ -188,7 +190,7 @@ class SafeLayerRemoverWindow(QWidget):
             btn.setCheckable(True)
             btn.setAutoRaise(True)
             btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-            btn.setIcon(status_icon(sorted(statuses, key=lambda s: s.value)[0]))
+            btn.setIcon(status_icon(Status.LOCKED if Status.LOCKED in statuses else next(iter(statuses))))
             btn.setToolTip(tr("Kattints a szűréshez"))
             btn.clicked.connect(lambda checked, s=statuses, b=btn: self._on_counter(s, b, checked))
             counters.addWidget(btn)
@@ -218,7 +220,8 @@ class SafeLayerRemoverWindow(QWidget):
         self.view.setModel(self.proxy)
         self.view.setUniformRowHeights(True)
         self.view.setAllColumnsShowFocus(True)
-        self.view.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        # Ctrl / Shift click selects several rows (used by Lock / Unlock)
+        self.view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -235,6 +238,7 @@ class SafeLayerRemoverWindow(QWidget):
         self.view.expanded.connect(lambda idx: self._remember_expanded(idx, True))
         self.view.collapsed.connect(lambda idx: self._remember_expanded(idx, False))
         self.view.selectionModel().currentChanged.connect(self._on_current_changed)
+        self.view.selectionModel().selectionChanged.connect(lambda *_: self._update_lock_buttons())
         self.model.checkedChanged.connect(self._update_selection_status)
         self.splitter.addWidget(self.view)
 
@@ -263,6 +267,15 @@ class SafeLayerRemoverWindow(QWidget):
         self.delete_button.clicked.connect(self.delete_checked)
         buttons.addWidget(self.select_all_button)
         buttons.addWidget(self.clear_button)
+        self.lock_button = QPushButton(status_icon(Status.LOCKED), tr("Zárolás"))
+        self.lock_button.setToolTip(tr("A kijelölt sorok rétegeinek zárolása: nem lesznek törölhetők (Ctrl+L). "
+                                       "Több sor Ctrl vagy Shift kattintással jelölhető ki."))
+        self.lock_button.clicked.connect(lambda: self.set_locked(self.selected_layer_ids(), True))
+        self.unlock_button = QPushButton(tr("Feloldás"))
+        self.unlock_button.setToolTip(tr("A kijelölt sorok rétegeinek feloldása (Ctrl+L)."))
+        self.unlock_button.clicked.connect(lambda: self.set_locked(self.selected_layer_ids(), False))
+        buttons.addWidget(self.lock_button)
+        buttons.addWidget(self.unlock_button)
         buttons.addStretch(1)
         buttons.addWidget(self.delete_button)
         lt.addLayout(buttons)
@@ -288,6 +301,7 @@ class SafeLayerRemoverWindow(QWidget):
         wrapper.setContentsMargins(0, 0, 0, 0)
         wrapper.addWidget(root)
         self._update_selection_status()
+        self._update_lock_buttons()
 
     def _build_shortcuts(self) -> None:
         ctx = Qt.ShortcutContext.WidgetWithChildrenShortcut
@@ -295,6 +309,7 @@ class SafeLayerRemoverWindow(QWidget):
             (QKeySequence(Qt.Key.Key_Delete), self.delete_checked),
             (QKeySequence("Ctrl+F"), self._focus_search),
             (QKeySequence(Qt.Key.Key_F5), lambda: self.refresh(full=True)),
+            (QKeySequence("Ctrl+L"), self.toggle_lock_selected),
         ):
             sc = QShortcut(seq, self)
             sc.setContext(ctx)
@@ -407,6 +422,7 @@ class SafeLayerRemoverWindow(QWidget):
         finally:
             self.view.setUpdatesEnabled(True)
         self._update_selection_status()
+        self._update_lock_buttons()
         self.analysisUpdated.emit(analysis)
 
     def _restore_expansion(self) -> None:
@@ -676,12 +692,22 @@ class SafeLayerRemoverWindow(QWidget):
         idx = self.view.indexAt(pos)
         if not idx.isValid():
             return
-        lid = self.proxy.index(idx.row(), COL_NAME, idx.parent()).data(LAYER_ID_ROLE)
-        if not lid or self.analysis is None:
+        if self.analysis is None:
             return
+        # act on the whole selection when the clicked row is part of it, else on the clicked row only
+        if not self.view.selectionModel().isRowSelected(idx.row(), idx.parent()):
+            self.view.setCurrentIndex(idx)
+        targets = self.selected_layer_ids()
+        menu = QMenu(self.view)
+        self._add_lock_actions(menu, targets)
+        lid = self.proxy.index(idx.row(), COL_NAME, idx.parent()).data(LAYER_ID_ROLE)
+        if not lid:
+            if not menu.isEmpty():
+                menu.exec(self.view.viewport().mapToGlobal(pos))
+            return
+        menu.addSeparator()
         info = self.analysis.infos.get(lid)
         layer = QgsProject.instance().mapLayer(lid)
-        menu = QMenu(self.view)
         menu.addAction(tr("Ugrás a rétegkezelőben"), lambda: self.locate_in_layer_tree(lid))
         if self.iface is not None and layer is not None:
             menu.addAction(tr("Réteg tulajdonságai…"), lambda: self.iface.showLayerProperties(layer))
@@ -698,6 +724,60 @@ class SafeLayerRemoverWindow(QWidget):
         if isinstance(layer, QgsVectorLayer) and layer.providerType() == "memory":
             menu.addAction(tr("Memóriaréteg mentése…"), lambda: self._save_memory_layer(lid))
         menu.exec(self.view.viewport().mapToGlobal(pos))
+
+    # ------------------------------------------------------------------ personal locks
+    def selected_layer_ids(self) -> list[str]:
+        """Layer ids of the selected rows; a selected group stands for every layer below it."""
+        ids: list[str] = []
+        for proxy_idx in self.view.selectionModel().selectedRows(COL_NAME):
+            src = self.proxy.mapToSource(proxy_idx)
+            item = self.model.itemFromIndex(src)
+            if item is None:
+                continue
+            if item.data(IS_GROUP_ROLE):
+                ids.extend(child.data(LAYER_ID_ROLE) for child in self.model._descendant_layers(item))  # noqa: SLF001
+            elif item.data(LAYER_ID_ROLE):
+                ids.append(item.data(LAYER_ID_ROLE))
+        return list(dict.fromkeys(i for i in ids if i))
+
+    def _add_lock_actions(self, menu: QMenu, layer_ids: list[str]) -> None:
+        if not layer_ids:
+            return
+        locked = locks.locked_ids()
+        to_lock = [i for i in layer_ids if i not in locked]
+        to_unlock = [i for i in layer_ids if i in locked]
+        if to_lock:
+            act = menu.addAction(status_icon(Status.LOCKED), tr("Zárolás ({n} réteg)").format(n=len(to_lock)),
+                                 lambda: self.set_locked(to_lock, True))
+            act.setToolTip(tr("Nem lesznek törölhetők, amíg fel nem oldod őket."))
+        if to_unlock:
+            menu.addAction(tr("Feloldás ({n} réteg)").format(n=len(to_unlock)), lambda: self.set_locked(to_unlock, False))
+
+    def toggle_lock_selected(self) -> None:
+        ids = self.selected_layer_ids()
+        if not ids:
+            return
+        locked = locks.locked_ids()
+        self.set_locked(ids, not all(i in locked for i in ids))
+
+    def set_locked(self, layer_ids, locked: bool) -> None:
+        ids = list(layer_ids)
+        if not ids:
+            return
+        locks.set_locked(ids, locked)
+        if locked:
+            # a locked layer cannot stay in the removal selection
+            self.model.set_checked(ids, False)
+        n = len(ids)
+        self._push(tr("{n} réteg zárolva.").format(n=n) if locked else tr("{n} réteg feloldva.").format(n=n),
+                   Qgis.MessageLevel.Info)
+        self.refresh()
+
+    def _update_lock_buttons(self) -> None:
+        ids = self.selected_layer_ids()
+        locked = locks.locked_ids()
+        self.lock_button.setEnabled(any(i not in locked for i in ids))
+        self.unlock_button.setEnabled(any(i in locked for i in ids))
 
     def _copy_reason(self, layer_id: str) -> None:
         info = self.analysis.infos.get(layer_id) if self.analysis else None

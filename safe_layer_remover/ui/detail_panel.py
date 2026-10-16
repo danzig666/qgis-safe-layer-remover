@@ -100,7 +100,7 @@ class DetailPanel(QWidget):
         return item
 
     def _row(self, cols, status: Optional[Status] = None, layer_id: Optional[str] = None,
-             tooltip: str = "") -> QTreeWidgetItem:
+             tooltip: str = "", span: bool = False) -> QTreeWidgetItem:
         item = QTreeWidgetItem(["   " + cols[0]] + list(cols[1:]))
         if status is not None:
             item.setIcon(0, status_icon(status, 14))
@@ -110,6 +110,8 @@ class DetailPanel(QWidget):
             for c in range(3):
                 item.setToolTip(c, tooltip)
         self.tree.addTopLevelItem(item)
+        if span:
+            item.setFirstColumnSpanned(True)   # one line message across all columns
         return item
 
     def show_layer(self, info: LayerInfo, analysis: AnalysisResult, show_info_items: bool = False) -> None:
@@ -122,10 +124,14 @@ class DetailPanel(QWidget):
         if info.error:
             self._section(tr("Az elemzés sikertelen (a réteg ezért nem törölhető):"))
             for line in info.error.splitlines():
-                self._row([line, "", ""], Status.ERROR, tooltip=line)
-        if info.status == Status.LOCKED:
+                self._row([line, "", ""], Status.ERROR, tooltip=line, span=True)
+        if info.user_locked:
             self._section(tr("Zárolt réteg:"))
-            self._row([tr("A projekt beállításai szerint a réteg nem eltávolítható."), "", ""], Status.LOCKED)
+            self._row([tr("Saját zárolás: a Feloldás paranccsal (jobb klikk vagy Ctrl+L) szüntethető meg."), "", ""],
+                      Status.LOCKED, span=True)
+        elif info.status == Status.LOCKED:
+            self._section(tr("Zárolt réteg:"))
+            self._row([tr("A projekt beállításai szerint a réteg nem eltávolítható."), "", ""], Status.LOCKED, span=True)
 
         if res is not None:
             victims = sorted_victims(res)
@@ -184,7 +190,8 @@ class DetailPanel(QWidget):
                           d.detail)
 
         if self.tree.topLevelItemCount() == 0:
-            self._row([tr("Nincs függő réteg és mellékhatás, a réteg biztonságosan törölhető."), "", ""], Status.SAFE)
+            self._row([tr("Nincs függő réteg és mellékhatás, a réteg biztonságosan törölhető."), "", ""], Status.SAFE,
+                      span=True)
 
         n = len(info.closure)
         self.chain_button.setText(tr("Lánc kijelölése ({n} réteg)").format(n=n))

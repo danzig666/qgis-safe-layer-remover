@@ -16,6 +16,7 @@ from .tree_model import (
     SHORT_REASON_ROLE,
     STATUS_ROLE,
     SUMMARY_ROLE,
+    USER_LOCKED_ROLE,
     VISIBLE_ROLE,
 )
 
@@ -65,20 +66,28 @@ class NameDelegate(QStyledItemDelegate):
 
     def paint(self, painter, option, index):
         super().paint(painter, option, index)
+        icons = []
+        if index.data(USER_LOCKED_ROLE):
+            icons.append(status_icon(Status.LOCKED, 16))
         mini = index.data(MINI_ICON_ROLE)
-        if mini is None:
+        if mini is not None:
+            icons.append(mini)
+        if not icons:
             return
         opt = QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
         text_rect = _style(option).subElementRect(QStyle.SubElement.SE_ItemViewItemText, opt, option.widget)
         fm = QFontMetrics(opt.font)
         text_w = fm.horizontalAdvance(opt.text)
-        size = max(10, int(fm.height() * 0.8))
-        x = text_rect.left() + min(text_w, text_rect.width() - size - 4) + 6
-        if x + size > option.rect.right():
-            return
+        size = max(10, int(fm.height() * 0.85))
+        needed = len(icons) * (size + 4)
+        x = text_rect.left() + min(text_w, text_rect.width() - needed) + 6
         y = option.rect.center().y() - size // 2
-        mini.paint(painter, QRect(x, y, size, size))
+        for icon in icons:
+            if x + size > option.rect.right():
+                break
+            icon.paint(painter, QRect(x, y, size, size))
+            x += size + 4
 
 
 class BadgeDelegate(QStyledItemDelegate):
