@@ -84,6 +84,10 @@ class SafeLayerRemoverPlugin:
         self.dock.visibilityChanged.connect(self._on_dock_visibility)
         self.dock.analysisUpdated.connect(self._update_indicators)
         self.watcher.changed.connect(self._on_project_changed)
+        self._bg_timer = QTimer()
+        self._bg_timer.setSingleShot(True)
+        self._bg_timer.setInterval(1500)
+        self._bg_timer.timeout.connect(self._background_analysis)
         self.watcher.start()
 
         # project level hooks
@@ -112,6 +116,8 @@ class SafeLayerRemoverPlugin:
         QTimer.singleShot(1500, self._background_analysis)
 
     def unload(self) -> None:
+        if getattr(self, "_bg_timer", None) is not None:
+            self._bg_timer.stop()
         self._remove_indicators()
         for act in (self.tree_action, getattr(self, "lock_action", None)):
             if act is not None:
@@ -178,7 +184,7 @@ class SafeLayerRemoverPlugin:
         else:
             self.dock.schedule_refresh()
             if plugin_settings.get("show_tree_indicators"):
-                self._background_analysis()
+                self._bg_timer.start()   # restarts while the project keeps changing
 
     def _background_analysis(self) -> None:
         """Keep the layer tree indicators current even when the dock is hidden."""
@@ -306,9 +312,9 @@ class SafeLayerRemoverPlugin:
         names = {i: (project.mapLayer(i).name() if project.mapLayer(i) is not None else i) for i in ids}
         broken: list[str] = []
         user_locked = [i for i in ids if i in locks.locked_ids()]
-        if sentinel:
+        if sentinel and (user_locked or self.analyzer.may_be_referenced(ids)):
+            # something may refer to these layers: full analysis on the (change tracked) caches
             try:
-                self.analyzer.invalidate()
                 analysis = self.analyzer.run()
                 res = analysis.evaluate(set(ids))
                 for v in res.victims.values():
@@ -318,7 +324,11 @@ class SafeLayerRemoverPlugin:
             except Exception as exc:  # noqa: BLE001
                 log_warning(f"Sentinel analysis failed: {exc}")
         problem = bool(broken or user_locked)
-        if not undo_all and not problem:
+        if not problem:
+            # helper layers that other plugins add without showing them are not worth an undo copy
+            ids = [i for i in ids if self.recycle_bin.was_in_layer_tree(i)]
+            names = {i: names[i] for i in ids}
+        if not ids or (not undo_all and not problem):
             return
         try:
             self.recycle_bin.max_entries = plugin_settings.get_int("undo_max_entries")

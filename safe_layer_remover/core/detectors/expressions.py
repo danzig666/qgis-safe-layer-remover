@@ -163,7 +163,7 @@ class ExpressionDetector(BaseDetector):
                     sources.append((tr("művelet: {n}").format(n=action.name()), block))
         except Exception:  # noqa: BLE001
             pass
-        sources.extend(self._xml_sources(layer, ctx))
+        sources.extend(ctx.cached(layer, "expression_sources", lambda: self._xml_sources(layer, ctx)))
         # dedupe
         seen = set()
         out = []

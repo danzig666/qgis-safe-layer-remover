@@ -189,6 +189,12 @@ class RecycleBin(QObject):
         except Exception as exc:  # noqa: BLE001 - tracking must never break QGIS
             log_warning(f"Layer tree position tracking failed: {exc}")
 
+    def was_in_layer_tree(self, layer_id: str) -> bool:
+        """True if the layer is (or was, just before this removal) shown in the Layers panel."""
+        if layer_id in self._pending_positions:
+            return True
+        return self.project.layerTreeRoot().findLayer(layer_id) is not None
+
     def _invalidate_theme_cache(self, *args) -> None:
         # rebuilt lazily outside the removal: reading theme records while QGIS removes a layer is unsafe
         self._theme_cache_dirty = True

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional
@@ -85,6 +86,7 @@ class DependencyAnalyzer:
         self._settings_override = settings
         self.detector_classes = list(detectors) if detectors is not None else list(ALL_DETECTORS)
         self.xml_cache: dict[str, str] = {}
+        self.derived_cache: dict[str, dict] = {}
         self.last_result: Optional[AnalysisResult] = None
 
     @property
@@ -100,10 +102,53 @@ class DependencyAnalyzer:
     def invalidate(self, layer_id: Optional[str] = None) -> None:
         if layer_id is None:
             self.xml_cache.clear()
+            self.derived_cache.clear()
         else:
             self.xml_cache.pop(layer_id, None)
+            self.derived_cache.pop(layer_id, None)
 
     # ------------------------------------------------------------------
+    def may_be_referenced(self, layer_ids) -> bool:
+        """Fast check (no full analysis): could anything break if these layers were removed?
+
+        False only when no other layer mentions their id or name anywhere in its settings, no relation
+        uses them and no setting turns layout usage into a blocker. Uses the per-layer caches, so it is
+        cheap once an analysis has run. When in doubt it returns True.
+        """
+        project = self.project
+        ids = set(layer_ids)
+        names = set()
+        for lid in ids:
+            layer = project.mapLayer(lid)
+            if layer is not None and layer.name():
+                names.add(layer.name().lower())
+        settings = self.settings()
+        if settings.get("block_on_layout") or settings.get("block_on_atlas"):
+            return True
+        try:
+            for rel in project.relationManager().relations().values():
+                if rel.referencingLayerId() in ids or rel.referencedLayerId() in ids:
+                    return True
+        except Exception:  # noqa: BLE001
+            return True
+        # whole-word match: a layer called "alpha" must not match every symbol's alpha="1" attribute
+        name_patterns = [(n, re.compile(r"(?<!\w)" + re.escape(n) + r"(?!\w)")) for n in names]
+        ctx = AnalysisContext(project, settings=settings, iface=self.iface, xml_cache=self.xml_cache,
+                              derived_cache=self.derived_cache)
+        for lid, layer in ctx.layers_by_id.items():
+            if lid in ids:
+                continue
+            try:
+                if ctx.layer_tokens(layer) & ids:
+                    return True
+                if name_patterns:
+                    low = ctx.layer_values_lower(layer)
+                    if any(name in low and pattern.search(low) for name, pattern in name_patterns):
+                        return True
+            except Exception:  # noqa: BLE001 - fail-closed
+                return True
+        return False
+
     def run(self) -> AnalysisResult:
         t0 = time.perf_counter()
         project = self.project
@@ -113,8 +158,12 @@ class DependencyAnalyzer:
         for lid in list(self.xml_cache):
             if lid not in current:
                 del self.xml_cache[lid]
+        for lid in list(self.derived_cache):
+            if lid not in current:
+                del self.derived_cache[lid]
 
-        ctx = AnalysisContext(project, settings=settings, iface=self.iface, xml_cache=self.xml_cache)
+        ctx = AnalysisContext(project, settings=settings, iface=self.iface, xml_cache=self.xml_cache,
+                              derived_cache=self.derived_cache)
         for cls in self.detector_classes:
             detector = cls()
             try:

@@ -24,9 +24,7 @@ class XmlIdScanDetector(BaseDetector):
 
     def detect_layer(self, layer, project, ctx):
         own = layer.id()
-        text = ctx.layer_xml(layer)
-        tokens = set(_TOKEN_RE.findall(text))
-        hits = (tokens & ctx.layers_by_id.keys()) - {own}
+        hits = (ctx.layer_tokens(layer) & ctx.layers_by_id.keys()) - {own}
         out = []
         for lid in sorted(hits):
             if (own, lid) in ctx.covered_pairs:

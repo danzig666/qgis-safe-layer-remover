@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import re
 import traceback
 from collections import defaultdict
 from typing import Any, Callable, Iterable, Optional
+from urllib.parse import unquote
 
 from qgis.core import QgsMapLayer, QgsProject, QgsReadWriteContext, QgsVectorLayer
 from qgis.PyQt.QtXml import QDomDocument
 
 from ..model import Certainty, DepKind, Dependency, Severity
 from ..texts import tr
+
+_WORD_RE = re.compile(r"\w+", re.UNICODE)
+_ATTR_VALUE_RE = re.compile(r'="([^"]*)"')
+_TEXT_RE = re.compile(r">([^<]+)<")
 
 
 def layer_xml(layer: QgsMapLayer) -> str:
@@ -32,6 +38,7 @@ class AnalysisContext:
         settings: Optional[dict] = None,
         iface: Any = None,
         xml_cache: Optional[dict[str, str]] = None,
+        derived_cache: Optional[dict[str, dict]] = None,
     ):
         self.project = project
         self.iface = iface
@@ -47,6 +54,8 @@ class AnalysisContext:
         except Exception:  # noqa: BLE001
             self.relations_by_id = {}
         self.xml_cache: dict[str, str] = xml_cache if xml_cache is not None else {}
+        # values computed from a layer's XML (tokens, parsed expressions ...), dropped with the XML
+        self.derived_cache: dict[str, dict] = derived_cache if derived_cache is not None else {}
         self.dependencies: list[Dependency] = []
         self.covered_pairs: set[tuple[Optional[str], str]] = set()
         self.errors: dict[str, list[str]] = defaultdict(list)
@@ -68,6 +77,48 @@ class AnalysisContext:
             text = layer_xml(layer)
             self.xml_cache[lid] = text
         return text
+
+    def cached(self, layer: QgsMapLayer, key: str, compute: Callable[[], Any]) -> Any:
+        """Per-layer value derived from the layer's XML, cached until the layer changes."""
+        bucket = self.derived_cache.setdefault(layer.id(), {})
+        if key not in bucket:
+            bucket[key] = compute()
+        return bucket[key]
+
+    def layer_tokens(self, layer: QgsMapLayer) -> frozenset:
+        return self.cached(layer, "tokens", lambda: frozenset(_WORD_RE.findall(self.layer_text(layer))))
+
+    def layer_text(self, layer: QgsMapLayer) -> str:
+        """Layer XML plus the url-decoded source (virtual layer queries are percent-encoded in the XML)."""
+        def build():
+            text = self.layer_xml(layer)
+            try:
+                if layer.providerType() == "virtual":
+                    text += "\n" + unquote(layer.source())
+            except Exception:  # noqa: BLE001
+                pass
+            return text
+        return self.cached(layer, "text", build)
+
+    def layer_text_lower(self, layer: QgsMapLayer) -> str:
+        return self.cached(layer, "lower", lambda: self.layer_text(layer).lower())
+
+    def layer_values_lower(self, layer: QgsMapLayer) -> str:
+        """Only the attribute values and text content of the layer XML, lower case.
+
+        Layer names are searched here: tag and attribute names (e.g. alpha="1") must not match a layer
+        called "alpha".
+        """
+        def build():
+            xml = self.layer_xml(layer)
+            parts = _ATTR_VALUE_RE.findall(xml) + _TEXT_RE.findall(xml)
+            try:
+                if layer.providerType() == "virtual":
+                    parts.append(unquote(layer.source()))
+            except Exception:  # noqa: BLE001
+                pass
+            return "\n".join(parts).lower()
+        return self.cached(layer, "values_lower", build)
 
     def resolve_layer_ref(self, text: str) -> list[tuple[str, Certainty]]:
         """Resolve a layer reference given as id or name.

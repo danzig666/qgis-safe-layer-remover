@@ -123,7 +123,8 @@ class ProjectWatcher(QObject):
         for layer in layers:
             self._watch_layer(layer)
             self.layerDirty.emit(layer.id())
-        self.touch()
+        # no touch(): layers added to the Layers panel trigger it through the layer tree signals,
+        # helper layers that plugins add and remove in a loop should not start an analysis
 
     def _on_layers_will_be_removed(self, items) -> None:
         for item in items:
@@ -135,7 +136,7 @@ class ProjectWatcher(QObject):
             if store:
                 self._disconnect_all(store)  # safe: handle based
             self.layerDirty.emit(lid)
-        self.touch()
+        # no touch() here either, see _on_layers_added
 
     def _on_reset(self, *args) -> None:
         # layers of the previous project are deleted; Qt dropped their connections

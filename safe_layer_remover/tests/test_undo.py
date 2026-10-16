@@ -164,6 +164,42 @@ class UndoAllTest(unittest.TestCase):
             plugin.unload()
 
 
+class FastPathTest(unittest.TestCase):
+    def setUp(self):
+        new_project()
+
+    def tearDown(self):
+        reset_settings()
+
+    def test_may_be_referenced(self):
+        from qgis.core import QgsVectorLayer
+        from safe_layer_remover.core.analyzer import DependencyAnalyzer
+        a, b, free = mk("Alpha"), mk("Bravo"), mk("Charlie")
+        add_join(a, b)
+        v = QgsVectorLayer('?query=SELECT * FROM "Charlie"', "V", "virtual")
+        an = DependencyAnalyzer(QgsProject.instance(), settings=dict(plugin_settings.DEFAULTS))
+        self.assertTrue(an.may_be_referenced([b.id()]))        # joined by Alpha
+        self.assertFalse(an.may_be_referenced([a.id()]))       # nothing refers to Alpha
+        self.assertFalse(an.may_be_referenced([free.id()]))
+        QgsProject.instance().addMapLayer(v)
+        an.invalidate()
+        self.assertTrue(an.may_be_referenced([free.id()]))     # referenced by name in a virtual layer query
+
+    def test_helper_layers_are_not_snapshotted(self):
+        plugin = start_plugin(undo_all_removals=True)
+        try:
+            from qgis.core import QgsVectorLayer
+            helper = QgsVectorLayer("Point?crs=EPSG:23700&field=id:integer", "helper", "memory")
+            QgsProject.instance().addMapLayer(helper, False)      # not shown in the Layers panel
+            QgsProject.instance().removeMapLayer(helper.id())
+            self.assertEqual(len(plugin.recycle_bin), 0)
+            shown = mk("shown")
+            QgsProject.instance().removeMapLayer(shown.id())
+            self.assertEqual(len(plugin.recycle_bin), 1)
+        finally:
+            plugin.unload()
+
+
 class BinLimitTest(unittest.TestCase):
     def setUp(self):
         new_project()
