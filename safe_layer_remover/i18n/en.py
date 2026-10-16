@@ -428,4 +428,5 @@ EN: dict[str, str] = {
     "{n} réteg nem jelölhető meg, mert nem törölhető (a függő rétegekkel együtt a Lánc kijelölése segít).":
         "{n} layer(s) cannot be marked because they cannot be removed (Select chain removes them together "
         "with their dependent layers).",
+    "(+{n} hasonló hiba)": "(+{n} similar errors)",
 }

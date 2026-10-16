@@ -106,6 +106,15 @@ def write_vector_copy(layer: QgsVectorLayer, path: str, layer_name: str = "data"
     options.driverName = "GPKG"
     options.layerName = layer_name
     options.fileEncoding = "UTF-8"
+    # GeoPackage uses a column called "fid" as its unique feature id. Layers copied from a GeoPackage
+    # often carry a plain "fid" attribute (with repeated values after copy / paste): give the
+    # GeoPackage id column another name so "fid" is written as an ordinary field.
+    field_names = {f.name().lower() for f in layer.fields()}
+    if "fid" in field_names:
+        fid_column, i = "fid_gpkg", 2
+        while fid_column in field_names:
+            fid_column, i = f"fid_gpkg{i}", i + 1
+        options.layerOptions = [f"FID={fid_column}"]
     ctx = QgsProject.instance().transformContext()
     # VERIFY: writeAsVectorFormatV3 (QGIS >= 3.20) returns (error, message, new_filename, new_layer)
     if hasattr(QgsVectorFileWriter, "writeAsVectorFormatV3"):
@@ -114,7 +123,26 @@ def write_vector_copy(layer: QgsVectorLayer, path: str, layer_name: str = "data"
         res = QgsVectorFileWriter.writeAsVectorFormatV2(layer, path, ctx, options)
     error = res[0] if isinstance(res, tuple) else res
     message = res[1] if isinstance(res, tuple) and len(res) > 1 else ""
-    return error == QgsVectorFileWriter.WriterError.NoError, message
+    return error == QgsVectorFileWriter.WriterError.NoError, short_error(message)
+
+
+def short_error(message: str, limit: int = 300) -> str:
+    """Collapse the per-feature error list of QgsVectorFileWriter into one readable line."""
+    import re
+    text = " ".join((message or "").split())
+    parts = [p.strip() for p in re.split(r"(?=Feature creation error)", text) if p.strip()]
+    errors = [p for p in parts if p.startswith("Feature creation error")]
+    others = [p for p in parts if not p.startswith("Feature creation error")]
+    if len(errors) > 1:
+        tail = errors[-1]
+        # the writer appends its summary ("Only N of M features written.") to the last error
+        summary = ""
+        m = re.search(r"\)\s*(Only .*)$", tail)
+        if m:
+            summary = m.group(1)
+        first = re.sub(r"\s*Only \d+ of \d+ features written\.*$", "", errors[0])
+        text = " ".join(others + [first, tr("(+{n} hasonló hiba)").format(n=len(errors) - 1), summary]).strip()
+    return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
 def _layer_xml(layer) -> str:

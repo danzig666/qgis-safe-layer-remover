@@ -81,6 +81,47 @@ class RemoverTest(unittest.TestCase):
             self.assertEqual(saved.featureCount(), 3)
             del saved
 
+    def test_memory_layer_with_duplicate_fid_field(self):
+        """A plain "fid" attribute with repeated values must not break the GeoPackage copy."""
+        from qgis.core import QgsVectorLayer
+        layer = QgsVectorLayer("LineString?crs=EPSG:23700&field=fid:integer&field=nev:string",
+                               "xxx Szabályozási vonal ÚJ", "memory")
+        feats = []
+        for i in range(30):
+            f = QgsFeature(layer.fields())
+            f.setAttributes([i % 3, f"v{i}"])          # fid values repeat: 0, 1, 2, 0, 1, 2 ...
+            f.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(650000 + i, 240000), QgsPointXY(650010 + i, 240010)]))
+            feats.append(f)
+        layer.dataProvider().addFeatures(feats)
+        QgsProject.instance().addMapLayer(layer)
+        lid = layer.id()
+        remover, bin_ = make_remover()
+        # OGR may still hold the GeoPackage open on Windows: do not fail on the clean-up
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            outcome = remover.remove([lid], RemovalOptions(use_recycle_bin=True, save_memory_dir=tmp))
+            self.assertTrue(outcome.ok, outcome.message)
+            saved = QgsVectorLayer(outcome.saved_files[0], "x", "ogr")
+            self.assertEqual(saved.featureCount(), 30)
+            self.assertEqual(sorted({f["fid"] for f in saved.getFeatures()}), [0, 1, 2])
+            del saved
+        entry = bin_.entries[0]
+        self.assertIsNotNone(entry.data_path)              # the bin copy is on disk, not the RAM fallback
+        res = bin_.restore([entry.entry_id])
+        self.assertEqual(res.errors, [])
+        restored = QgsProject.instance().mapLayer(res.restored[0])
+        self.assertEqual(restored.featureCount(), 30)
+        self.assertEqual(sorted(f["fid"] for f in restored.getFeatures())[:6], [0] * 6)
+
+    def test_short_error(self):
+        from safe_layer_remover.core.recycle_bin import short_error
+        one = "Feature creation error (OGR error: failed to execute insert : UNIQUE constraint failed: t.fid) "
+        msg = "Feature write errors: " + one * 374 + "Only 257 of 631 features written."
+        short = short_error(msg)
+        self.assertLess(len(short), 300)
+        self.assertIn("UNIQUE constraint failed", short)
+        self.assertIn("373", short)
+        self.assertIn("Only 257 of 631 features written.", short)
+
     # 16
     def test_recheck_aborts_when_project_changed(self):
         a, b = mk("A"), mk("B")

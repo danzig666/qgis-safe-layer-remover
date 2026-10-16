@@ -15,7 +15,7 @@ category=Layers
 tags=layers,remove,delete,dependencies,join,virtual layer,relations,cleanup
 experimental=False
 icon=icons/icon.png
-changelog=1.2.3 The list keeps its filters after locking or any refresh; when the selected layer drops out of the filtered list the next row is selected.
+changelog=1.2.3 Memory layers with a "fid" field (e.g. copied from a GeoPackage) can be saved and removed again; short error messages. The list keeps its filters after locking or any refresh; when the selected layer drops out of the filtered list the next row is selected.
  1.2.2 Removing layers in the Layers panel is no longer slowed down by the plugin: dependencies are collected only when something relevant changes (a removal reuses the last result), layout XML is cached, the Layers panel markers are updated in place.
  1.2.1 Much faster layer removal: the sentinel no longer runs a full analysis for every removal (about 1.9 s -> 0.02 s per removal in a 380 layer project); helper layers never shown in the Layers panel are ignored; faster analysis through per-layer caches.
  1.2.0 Optional undo for every layer removal (also from the Layers panel); undo restores the original layer id, tree position, joins, relations, map themes and layout maps. Recycle bin limits. Mark / unmark several layers for removal from the context menu. "Select all" picks untouched layers only. Wider name column, window can't be minimized.
