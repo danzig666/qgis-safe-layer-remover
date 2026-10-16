@@ -13,7 +13,7 @@ DEFAULTS: dict[str, bool] = {
     "use_xml_scan": True,
     "recycle_bin_enabled": True,
     "memory_save_default": True,
-    "remove_empty_groups": False,
+    "remove_empty_groups": True,
     "sync_selection": True,
     "show_info_items": False,
     "show_tree_indicators": True,
