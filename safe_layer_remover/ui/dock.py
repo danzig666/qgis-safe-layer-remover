@@ -433,6 +433,7 @@ class SafeLayerRemoverWindow(QWidget):
             self.analyzer.invalidate()
         self._pending = False
         current_id = self._current_layer_id()
+        visible_before = self._visible_layer_ids()   # to move on to the next row if current one drops out
         checked = self.model.checked_ids()
         scroll = self.view.verticalScrollBar().value()
         slow = self._last_duration > 0.3
@@ -464,10 +465,12 @@ class SafeLayerRemoverWindow(QWidget):
             self._rebuild_layout_menu()
             self._update_counters()
             self._update_error_banner()
-            if current_id and current_id in analysis.infos:
-                self.jump_to(current_id, scroll=False)
-            else:
-                self.detail.clear()
+            # keep the active filters; if the current layer no longer passes them (e.g. it was just
+            # locked while "Untouched only" is on), select the next visible row instead
+            if not (current_id and current_id in analysis.infos
+                    and self.jump_to(current_id, scroll=False, reveal=False)):
+                if not self._select_next_visible(current_id, visible_before):
+                    self.detail.clear()
             self.view.verticalScrollBar().setValue(scroll)
         finally:
             self.view.setUpdatesEnabled(True)
@@ -667,12 +670,42 @@ class SafeLayerRemoverWindow(QWidget):
         except Exception:  # noqa: BLE001
             pass
 
-    def jump_to(self, layer_id: str, scroll: bool = True) -> None:
+    def _visible_layer_ids(self) -> list[str]:
+        """Layer ids in the order they are shown (filtered, groups flattened)."""
+        out: list[str] = []
+
+        def walk(parent: QModelIndex):
+            for row in range(self.proxy.rowCount(parent)):
+                idx = self.proxy.index(row, COL_NAME, parent)
+                lid = idx.data(LAYER_ID_ROLE)
+                if lid:
+                    out.append(lid)
+                walk(idx)
+
+        walk(QModelIndex())
+        return out
+
+    def _select_next_visible(self, previous_id: Optional[str], order_before: list[str]) -> bool:
+        """After a refresh: select the row that followed `previous_id` (or the one before it)."""
+        if not previous_id or previous_id not in order_before:
+            return False
+        visible = set(self._visible_layer_ids())
+        pos = order_before.index(previous_id)
+        candidates = order_before[pos + 1:] + list(reversed(order_before[:pos]))
+        for lid in candidates:
+            if lid in visible and self.jump_to(lid, scroll=False, reveal=False):
+                return True
+        return False
+
+    def jump_to(self, layer_id: str, scroll: bool = True, reveal: bool = True) -> bool:
+        """Select a layer row. With reveal=False a layer hidden by the filters is not shown (returns False)."""
         src = self.model.index_for_layer(layer_id)
         if not src.isValid():
-            return
+            return False
         idx = self.proxy.mapFromSource(src)
         if not idx.isValid():
+            if not reveal:
+                return False
             # hidden by a filter: reset the filters
             self.search.clear()
             self.status_combo.setCurrentIndex(0)
@@ -680,7 +713,7 @@ class SafeLayerRemoverWindow(QWidget):
             self._set_layout_filter(None)
             idx = self.proxy.mapFromSource(src)
         if not idx.isValid():
-            return
+            return False
         parent = idx.parent()
         while parent.isValid():
             self.view.setExpanded(parent, True)
@@ -688,6 +721,7 @@ class SafeLayerRemoverWindow(QWidget):
         self.view.setCurrentIndex(idx)
         if scroll:
             self.view.scrollTo(idx, QAbstractItemView.ScrollHint.EnsureVisible)
+        return True
 
     def locate_in_layer_tree(self, layer_id: str) -> None:
         if self.iface is None:

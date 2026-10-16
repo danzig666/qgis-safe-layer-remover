@@ -225,6 +225,42 @@ class FastPathTest(unittest.TestCase):
             plugin.unload()
 
 
+class FilterStaysTest(unittest.TestCase):
+    def setUp(self):
+        new_project()
+
+    def tearDown(self):
+        reset_settings()
+
+    def test_lock_keeps_filter_and_moves_to_next_row(self):
+        from qgis.core import QgsVectorLayer
+        from safe_layer_remover.ui.dock import UNTOUCHED
+        plugin = start_plugin()
+        try:
+            layers = []
+            for name in ("one", "two", "three"):
+                lyr = QgsVectorLayer("?query=SELECT 1 AS id", name, "virtual")
+                QgsProject.instance().addMapLayer(lyr)
+                layers.append(lyr)
+            win = plugin.dock
+            win.refresh()
+            idx = [i for i, (_l, v) in enumerate(win._status_filters) if v == UNTOUCHED][0]  # noqa: SLF001
+            win.status_combo.setCurrentIndex(idx)
+            order = win._visible_layer_ids()                 # noqa: SLF001
+            self.assertEqual(len(order), 3)
+            middle = order[1]
+            win.jump_to(middle)
+            win.set_locked([middle], True)
+            self.assertEqual(win.status_combo.currentIndex(), idx, "the filter must stay")
+            self.assertEqual(win._visible_layer_ids(), [order[0], order[2]])  # noqa: SLF001
+            self.assertEqual(win._current_layer_id(), order[2], "the next row is selected")  # noqa: SLF001
+            # locking the last row moves back to the previous one
+            win.set_locked([order[2]], True)
+            self.assertEqual(win._current_layer_id(), order[0])  # noqa: SLF001
+        finally:
+            plugin.unload()
+
+
 class BinLimitTest(unittest.TestCase):
     def setUp(self):
         new_project()
