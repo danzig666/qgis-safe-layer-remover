@@ -18,6 +18,12 @@ DEFAULTS: dict[str, bool] = {
     "show_info_items": False,
     "show_tree_indicators": True,
     "sentinel_mode": True,
+    "undo_all_removals": False,
+}
+
+INT_DEFAULTS: dict[str, int] = {
+    "undo_max_entries": 50,              # recycle bin size, the oldest entries are dropped
+    "undo_memory_feature_limit": 200000,  # bigger memory layers keep only their definition (automatic undo)
 }
 
 
@@ -41,6 +47,18 @@ def save(values: dict) -> None:
     for k in DEFAULTS:
         if k in values:
             s.setValue(PREFIX + k, bool(values[k]))
+
+
+def get_int(key: str) -> int:
+    default = INT_DEFAULTS[key]
+    try:
+        return int(QgsSettings().value(PREFIX + key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def set_int(key: str, value: int) -> None:
+    QgsSettings().setValue(PREFIX + key, int(value))
 
 
 def get(key: str) -> bool:

@@ -71,6 +71,8 @@ class SafeLayerRemoverPlugin:
         project = QgsProject.instance()
         self.analyzer = DependencyAnalyzer(iface=self.iface)
         self.recycle_bin = RecycleBin()
+        self.recycle_bin.max_entries = plugin_settings.get_int("undo_max_entries")
+        self.recycle_bin.start_tracking()
         self.watcher = ProjectWatcher()
         self.watcher.layerDirty.connect(self.analyzer.invalidate)
 
@@ -139,6 +141,7 @@ class SafeLayerRemoverPlugin:
                 pass
             self.action.deleteLater()
         if self.recycle_bin is not None:
+            self.recycle_bin.stop_tracking()
             self.recycle_bin.clear()
         if self.translator is not None:
             QCoreApplication.removeTranslator(self.translator)
@@ -200,6 +203,7 @@ class SafeLayerRemoverPlugin:
         self._clearing = False
         if self.recycle_bin is not None:
             self.recycle_bin.clear()
+            self.recycle_bin.start_tracking()   # the map theme collection is recreated on clear
         if self.analyzer is not None:
             self.analyzer.invalidate()
 
@@ -291,48 +295,62 @@ class SafeLayerRemoverPlugin:
     def _on_layers_will_be_removed(self, items) -> None:
         if self._clearing or self.dock is None or self.dock.own_removal:
             return
-        if not plugin_settings.get("sentinel_mode"):
+        sentinel = plugin_settings.get("sentinel_mode")
+        undo_all = plugin_settings.get("undo_all_removals")
+        if not sentinel and not undo_all:
             return
         ids = [i if isinstance(i, str) else i.id() for i in items]
         if not ids:
             return
-        try:
-            self.analyzer.invalidate()
-            analysis = self.analyzer.run()
-            res = analysis.evaluate(set(ids))
-        except Exception as exc:  # noqa: BLE001
-            log_warning(f"Sentinel analysis failed: {exc}")
-            return
+        project = QgsProject.instance()
+        names = {i: (project.mapLayer(i).name() if project.mapLayer(i) is not None else i) for i in ids}
+        broken: list[str] = []
         user_locked = [i for i in ids if i in locks.locked_ids()]
-        if not res.victims and not res.blocking_objects and not user_locked:
+        if sentinel:
+            try:
+                self.analyzer.invalidate()
+                analysis = self.analyzer.run()
+                res = analysis.evaluate(set(ids))
+                for v in res.victims.values():
+                    broken.append(f"{analysis.name_of(v.layer_id)} ({kind_label(v.chain[-1].kind)})")
+                for d in res.blocking_objects:
+                    broken.append(f"{d.dependent_label} ({kind_label(d.kind)})")
+            except Exception as exc:  # noqa: BLE001
+                log_warning(f"Sentinel analysis failed: {exc}")
+        problem = bool(broken or user_locked)
+        if not undo_all and not problem:
             return
         try:
-            entries = self.recycle_bin.store(ids)
+            self.recycle_bin.max_entries = plugin_settings.get_int("undo_max_entries")
+            entries = self.recycle_bin.store(
+                ids, automatic=True, feature_limit=plugin_settings.get_int("undo_memory_feature_limit"))
         except Exception as exc:  # noqa: BLE001
-            log_warning(f"Sentinel snapshot failed: {exc}")
+            log_warning(f"Snapshot before removal failed: {exc}")
             entries = []
-        removed = ", ".join(analysis.name_of(i) for i in ids)
-        broken = []
-        for v in res.victims.values():
-            broken.append(f"{analysis.name_of(v.layer_id)} ({kind_label(v.chain[-1].kind)})")
-        for d in res.blocking_objects:
-            broken.append(f"{d.dependent_label} ({kind_label(d.kind)})")
+        removed = ", ".join(names[i] for i in ids)
+        parts = []
         if broken:
-            text = tr("{r} törlése elrontotta: {b}.").format(r=removed, b=", ".join(broken))
-        else:
-            text = ""
+            parts.append(tr("{r} törlése elrontotta: {b}.").format(r=removed, b=", ".join(broken)))
         if user_locked:
-            text = (text + " " if text else "") + tr("Zárolt réteget töröltél: {l}.").format(
-                l=", ".join(analysis.name_of(i) for i in user_locked))
+            parts.append(tr("Zárolt réteget töröltél: {l}.").format(l=", ".join(names[i] for i in user_locked)))
+        if not parts:
+            parts.append(tr("Eltávolítva: {r}.").format(r=removed))
+        skipped = [e.name for e in entries if e.data_skipped]
+        if skipped:
+            parts.append(tr("Túl nagy memóriaréteg, az adatai nem állíthatók vissza: {l}.").format(l=", ".join(skipped)))
+        text = " ".join(parts)
         batch = entries[0].batch_id if entries else None
-        log_info(f"Sentinel: {text}")
-        QTimer.singleShot(0, lambda: self._sentinel_message(text, batch))
+        log_info(f"Removal snapshot: {text}")
+        QTimer.singleShot(0, lambda: self._sentinel_message(text, batch, problem))
 
-    def _sentinel_message(self, text: str, batch_id: Optional[str]) -> None:
+    def _sentinel_message(self, text: str, batch_id: Optional[str], problem: bool = True) -> None:
         bar = self.iface.messageBar()
         widget = bar.createMessage(tr("Biztonságos rétegtörlés"), text)
         if batch_id and self.dock is not None:
-            button = QPushButton(tr("Visszaállítás"))
+            button = QPushButton(tr("Visszaállítás") if problem else tr("Visszavonás"))
             button.clicked.connect(lambda: self.dock._undo(batch_id, widget))  # noqa: SLF001
             widget.layout().addWidget(button)
-        bar.pushWidget(widget, Qgis.MessageLevel.Warning, 0)
+        if problem:
+            bar.pushWidget(widget, Qgis.MessageLevel.Warning, 0)       # stays until closed
+        else:
+            bar.pushWidget(widget, Qgis.MessageLevel.Info, 15)

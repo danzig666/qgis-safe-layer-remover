@@ -2,7 +2,16 @@
 
 from __future__ import annotations
 
-from qgis.PyQt.QtWidgets import QCheckBox, QDialog, QDialogButtonBox, QGroupBox, QLabel, QVBoxLayout
+from qgis.PyQt.QtWidgets import (
+    QCheckBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
+    QGroupBox,
+    QLabel,
+    QSpinBox,
+    QVBoxLayout,
+)
 
 from ..core import settings as plugin_settings
 from ..core.texts import tr
@@ -16,6 +25,7 @@ _LABELS = [
     ]),
     (tr("Törlés"), [
         ("recycle_bin_enabled", tr("Lomtár használata (visszavonható törlés)")),
+        ("undo_all_removals", tr("Minden rétegtörlés visszavonható legyen, a QGIS rétegkezelőjéből végzett is")),
         ("memory_save_default", tr("Memóriarétegek mentése alapból bejelölve")),
         ("remove_empty_groups", tr("Kiürült csoportok törlése alapból bejelölve")),
     ]),
@@ -45,6 +55,27 @@ class SettingsDialog(QDialog):
                 gl.addWidget(cb)
                 self._boxes[key] = cb
             layout.addWidget(group)
+        limits = QGroupBox(tr("Lomtár korlátai"))
+        form = QFormLayout(limits)
+        self._max_entries = QSpinBox()
+        self._max_entries.setRange(1, 1000)
+        self._max_entries.setValue(plugin_settings.get_int("undo_max_entries"))
+        self._max_entries.setToolTip(tr("Ennél több tételnél a legrégebbiek véglegesen törlődnek a lomtárból."))
+        form.addRow(tr("Legfeljebb ennyi tétel:"), self._max_entries)
+        self._feature_limit = QSpinBox()
+        self._feature_limit.setRange(0, 100000000)
+        self._feature_limit.setSingleStep(10000)
+        self._feature_limit.setGroupSeparatorShown(True)
+        self._feature_limit.setValue(plugin_settings.get_int("undo_memory_feature_limit"))
+        self._feature_limit.setToolTip(tr("A rétegkezelőből törölt, ennél több elemű memóriarétegeknek csak a "
+                                          "definíciója kerül a lomtárba, az adataik nem."))
+        form.addRow(tr("Memóriaréteg adatai legfeljebb ennyi elemig:"), self._feature_limit)
+        note = QLabel(tr("A lomtár a lemezen, egy ideiglenes mappában tárolja a rétegeket, és a QGIS bezárásakor, "
+                         "másik projekt megnyitásakor vagy a lomtár ürítésekor törlődik."))
+        note.setWordWrap(True)
+        note.setEnabled(False)
+        form.addRow(note)
+        layout.addWidget(limits)
         hint = QLabel(tr("A változások a következő elemzéskor lépnek életbe."))
         hint.setEnabled(False)
         layout.addWidget(hint)
@@ -58,7 +89,11 @@ class SettingsDialog(QDialog):
     def _defaults(self) -> None:
         for key, cb in self._boxes.items():
             cb.setChecked(plugin_settings.DEFAULTS[key])
+        self._max_entries.setValue(plugin_settings.INT_DEFAULTS["undo_max_entries"])
+        self._feature_limit.setValue(plugin_settings.INT_DEFAULTS["undo_memory_feature_limit"])
 
     def _save(self) -> None:
         plugin_settings.save({k: cb.isChecked() for k, cb in self._boxes.items()})
+        plugin_settings.set_int("undo_max_entries", self._max_entries.value())
+        plugin_settings.set_int("undo_memory_feature_limit", self._feature_limit.value())
         self.accept()

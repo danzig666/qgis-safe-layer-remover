@@ -30,9 +30,16 @@ is saved in the project. Select several rows with Ctrl or Shift.
 
 ![Confirmation](docs/confirm.png)
 
-Removed layers go to a recycle bin and can be restored, memory layer data included. If you remove
-something from the normal Layers panel that breaks other layers, the plugin notices and offers to put it
-back. Layers that others depend on get a small marker in the Layers panel.
+Removed layers go to a recycle bin and can be restored, memory layer data included. Undo brings the
+layer back with its original id and in its old place, together with the joins, relations, map theme
+entries and layout maps that QGIS dropped when it was removed. If you remove something from the normal
+Layers panel that breaks other layers, the plugin notices and offers to put it back. Layers that others
+depend on get a small marker in the Layers panel.
+
+There's also an option (off by default) to make *every* layer removal undoable, including the ones you
+do in the Layers panel. The recycle bin lives in a temporary folder on disk, not in memory, and is
+cleared when QGIS closes or another project is opened. It keeps the last 50 items, and memory layers
+above 200 000 features keep only their definition; both limits can be changed in the settings.
 
 ![Warning after removing a layer from the Layers panel](docs/sentinel.png)
 

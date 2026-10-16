@@ -7,7 +7,7 @@ import re
 from typing import Optional
 
 from qgis.core import Qgis, QgsApplication, QgsProject, QgsSettings, QgsVectorLayer
-from qgis.PyQt.QtCore import QByteArray, QModelIndex, Qt, QTimer, pyqtSignal
+from qgis.PyQt.QtCore import QByteArray, QEvent, QModelIndex, Qt, QTimer, pyqtSignal
 from qgis.PyQt.QtGui import QKeySequence
 from qgis.PyQt.QtWidgets import (
     QAbstractItemView,
@@ -58,6 +58,7 @@ from .tree_model import (
     IS_GROUP_ROLE,
     LAYER_ID_ROLE,
     SUMMARY_ROLE,
+    REMOVABLE_ROLE,
     USER_LOCKED_ROLE,
     LayerTreeModel,
 )
@@ -87,6 +88,7 @@ def _theme_icon(*names):
 GEOMETRY_KEY = "SafeLayerRemover/windowGeometry"
 SPLITTER_KEY = "SafeLayerRemover/splitterState"
 HEADER_KEY = "SafeLayerRemover/headerState"
+HEADER_MANUAL_KEY = "SafeLayerRemover/headerResizedByUser"
 
 
 class SafeLayerRemoverWindow(QWidget):
@@ -94,7 +96,11 @@ class SafeLayerRemoverWindow(QWidget):
     visibilityChanged = pyqtSignal(bool)
 
     def __init__(self, iface, analyzer: DependencyAnalyzer, recycle_bin: RecycleBin, parent=None):
+        # a normal window that can be maximized and closed, but not minimized
         super().__init__(parent, Qt.WindowType.Window)
+        self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.CustomizeWindowHint | Qt.WindowType.WindowTitleHint
+                            | Qt.WindowType.WindowSystemMenuHint | Qt.WindowType.WindowMaximizeButtonHint
+                            | Qt.WindowType.WindowCloseButtonHint)
         self.setWindowTitle(tr("Biztonságos rétegtörlés"))
         self.setObjectName("SafeLayerRemoverWindow")
         self._geometry_restored = False
@@ -144,6 +150,7 @@ class SafeLayerRemoverWindow(QWidget):
         row.addWidget(self.layout_button)
 
         self.status_combo = QComboBox()
+        self.status_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self._status_filters = [
             (tr("Minden állapot"), None),
             (tr("Csak törölhetők"), _REMOVABLE),
@@ -235,6 +242,11 @@ class SafeLayerRemoverWindow(QWidget):
         header.setSectionResizeMode(COL_TYPE, QHeaderView.ResizeMode.Interactive)
         self.view.setColumnWidth(COL_NAME, 210)
         self.view.setColumnWidth(COL_TYPE, 150)
+        # the name column follows the window width until the user resizes it by hand
+        self._name_width_manual = False
+        self._auto_resizing = False
+        header.sectionResized.connect(self._on_section_resized)
+        self.view.viewport().installEventFilter(self)
         self.view.expanded.connect(lambda idx: self._remember_expanded(idx, True))
         self.view.collapsed.connect(lambda idx: self._remember_expanded(idx, False))
         self.view.selectionModel().currentChanged.connect(self._on_current_changed)
@@ -257,8 +269,11 @@ class SafeLayerRemoverWindow(QWidget):
         lt.addWidget(self.selection_label)
 
         buttons = QHBoxLayout()
-        self.select_all_button = QPushButton(tr("Összes törölhető kijelölése"))
-        self.select_all_button.clicked.connect(self.model.check_all_removable)
+        self.select_all_button = QPushButton(tr("Összes érintetlen kijelölése"))
+        self.select_all_button.setToolTip(tr("Bejelöli az összes réteget, amelynek törlése semmit nem érint: nem függ "
+                                             "tőle réteg, nincs figyelmeztetése, és nem szerepel elrendezésen vagy "
+                                             "térképtémában."))
+        self.select_all_button.clicked.connect(self.model.check_all_untouched)
         self.clear_button = QPushButton(tr("Kijelölés törlése"))
         self.clear_button.clicked.connect(self._clear_checks)
         self.delete_button = QPushButton(tr("Kijelöltek törlése"))
@@ -340,8 +355,14 @@ class SafeLayerRemoverWindow(QWidget):
         if isinstance(splitter, QByteArray) and not splitter.isEmpty():
             self.splitter.restoreState(splitter)
         header = s.value(HEADER_KEY, None)
-        if isinstance(header, QByteArray) and not header.isEmpty():
-            self.view.header().restoreState(header)
+        manual = str(s.value(HEADER_MANUAL_KEY, False)).lower() in ("true", "1")
+        if manual and isinstance(header, QByteArray) and not header.isEmpty():
+            self._auto_resizing = True
+            try:
+                self.view.header().restoreState(header)
+            finally:
+                self._auto_resizing = False
+            self._name_width_manual = True
 
     def save_window_state(self) -> None:
         if not self._geometry_restored:
@@ -350,6 +371,35 @@ class SafeLayerRemoverWindow(QWidget):
         s.setValue(GEOMETRY_KEY, self.saveGeometry())
         s.setValue(SPLITTER_KEY, self.splitter.saveState())
         s.setValue(HEADER_KEY, self.view.header().saveState())
+        s.setValue(HEADER_MANUAL_KEY, bool(self._name_width_manual))
+
+    # ------------------------------------------------------------------ column widths
+    def _on_section_resized(self, index: int, _old: int, _new: int) -> None:
+        if index == COL_NAME and not self._auto_resizing:
+            self._name_width_manual = True
+
+    def eventFilter(self, obj, event):  # noqa: N802 - Qt API
+        if obj is self.view.viewport() and event.type() == QEvent.Type.Resize:
+            QTimer.singleShot(0, self.fit_name_column)
+        return super().eventFilter(obj, event)
+
+    def fit_name_column(self) -> None:
+        """Give the name column the room it needs when the window is wide enough."""
+        if self._name_width_manual:
+            return
+        available = self.view.viewport().width()
+        if available <= 0:
+            return
+        wanted = max(210, self.view.sizeHintForColumn(COL_NAME) + 12)
+        type_w = self.view.columnWidth(COL_TYPE)
+        # keep at least ~260 px for the status column
+        width = max(210, min(wanted, available - type_w - 260))
+        if width != self.view.columnWidth(COL_NAME):
+            self._auto_resizing = True
+            try:
+                self.view.setColumnWidth(COL_NAME, width)
+            finally:
+                self._auto_resizing = False
 
     def showEvent(self, event):  # noqa: N802 - Qt API
         if not self._geometry_restored:
@@ -423,6 +473,7 @@ class SafeLayerRemoverWindow(QWidget):
             self.view.setUpdatesEnabled(True)
         self._update_selection_status()
         self._update_lock_buttons()
+        self.fit_name_column()
         self.analysisUpdated.emit(analysis)
 
     def _restore_expansion(self) -> None:
@@ -699,6 +750,7 @@ class SafeLayerRemoverWindow(QWidget):
             self.view.setCurrentIndex(idx)
         targets = self.selected_layer_ids()
         menu = QMenu(self.view)
+        self._add_mark_actions(menu, targets)
         self._add_lock_actions(menu, targets)
         lid = self.proxy.index(idx.row(), COL_NAME, idx.parent()).data(LAYER_ID_ROLE)
         if not lid:
@@ -739,6 +791,39 @@ class SafeLayerRemoverWindow(QWidget):
             elif item.data(LAYER_ID_ROLE):
                 ids.append(item.data(LAYER_ID_ROLE))
         return list(dict.fromkeys(i for i in ids if i))
+
+    def _add_mark_actions(self, menu: QMenu, layer_ids: list[str]) -> None:
+        if not layer_ids:
+            return
+        checked = self.model.checked_ids()
+        to_mark = [i for i in layer_ids if i not in checked]
+        to_unmark = [i for i in layer_ids if i in checked]
+        if to_mark:
+            menu.addAction(tr("Megjelölés törlésre ({n} réteg)").format(n=len(to_mark)),
+                           lambda: self.mark_for_removal(to_mark, True))
+        if to_unmark:
+            menu.addAction(tr("Törlési jelölés levétele ({n} réteg)").format(n=len(to_unmark)),
+                           lambda: self.mark_for_removal(to_unmark, False))
+        if to_mark or to_unmark:
+            menu.addSeparator()
+
+    def mark_for_removal(self, layer_ids, mark: bool) -> None:
+        """Check / uncheck several layers at once. Layers that cannot be removed are skipped when marking."""
+        ids = list(layer_ids)
+        if not mark:
+            self.model.set_checked(ids, False)
+            return
+        removable = []
+        for lid in ids:
+            item = self.model.layer_item(lid)
+            if item is not None and item.data(REMOVABLE_ROLE):
+                removable.append(lid)
+        if removable:
+            self.model.set_checked(removable, True)
+        skipped = len(ids) - len(removable)
+        if skipped:
+            self._push(tr("{n} réteg nem jelölhető meg, mert nem törölhető (a függő rétegekkel együtt a "
+                          "Lánc kijelölése segít).").format(n=skipped), Qgis.MessageLevel.Info)
 
     def _add_lock_actions(self, menu: QMenu, layer_ids: list[str]) -> None:
         if not layer_ids:
@@ -923,6 +1008,8 @@ class SafeLayerRemoverWindow(QWidget):
     # ------------------------------------------------------------------ misc
     def open_settings(self) -> None:
         if SettingsDialog(self).exec() == SettingsDialog.DialogCode.Accepted:
+            from ..core import settings as plugin_settings
+            self.recycle_bin.max_entries = plugin_settings.get_int("undo_max_entries")
             self.refresh(full=True)
 
     def export_report(self, fmt: str) -> None:

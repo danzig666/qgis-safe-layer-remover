@@ -399,4 +399,33 @@ EN: dict[str, str] = {
     "Saját zárolás: a Feloldás paranccsal (jobb klikk vagy Ctrl+L) szüntethető meg.":
         "Locked by you: release it with Unlock (right click or Ctrl+L).",
     "Zárolt réteget töröltél: {l}.": "You removed a locked layer: {l}.",
+
+    # --- undo every removal, marking, limits ------------------------------------
+    "Minden rétegtörlés visszavonható legyen, a QGIS rétegkezelőjéből végzett is":
+        "Make every layer removal undoable, also removals from the QGIS Layers panel",
+    "Lomtár korlátai": "Recycle bin limits",
+    "Legfeljebb ennyi tétel:": "Keep at most this many items:",
+    "Ennél több tételnél a legrégebbiek véglegesen törlődnek a lomtárból.":
+        "Above this number the oldest items are deleted from the recycle bin.",
+    "Memóriaréteg adatai legfeljebb ennyi elemig:": "Keep memory layer data up to this many features:",
+    "A rétegkezelőből törölt, ennél több elemű memóriarétegeknek csak a definíciója kerül a lomtárba, az adataik nem.":
+        "For larger memory layers removed in the Layers panel only the definition is kept, not the data.",
+    "A lomtár a lemezen, egy ideiglenes mappában tárolja a rétegeket, és a QGIS bezárásakor, másik projekt megnyitásakor vagy a lomtár ürítésekor törlődik.":
+        "The recycle bin keeps layers on disk in a temporary folder. It is deleted when QGIS closes, "
+        "when another project is opened or when the bin is emptied.",
+    "Eltávolítva: {r}.": "Removed: {r}.",
+    "Túl nagy memóriaréteg, az adatai nem állíthatók vissza: {l}.": "Memory layer too large, its data cannot be restored: {l}.",
+    "{n}: a memóriaréteg túl nagy volt, ezért csak a definíciója állt vissza, az adatai nem.":
+        "{n}: the memory layer was too large, only its definition was restored, not its data.",
+    "Néhány réteg új azonosítót kapott; az ezekre mutató hivatkozások egy része nem állt vissza.":
+        "Some layers got a new id; some references to them were not restored.",
+    "Összes érintetlen kijelölése": "Select all untouched",
+    "Bejelöli az összes réteget, amelynek törlése semmit nem érint: nem függ tőle réteg, nincs figyelmeztetése, és nem szerepel elrendezésen vagy térképtémában.":
+        "Marks every layer whose removal affects nothing: no layer depends on it, it has no warning, "
+        "and it is not on a layout or in a map theme.",
+    "Megjelölés törlésre ({n} réteg)": "Mark for removal ({n} layers)",
+    "Törlési jelölés levétele ({n} réteg)": "Unmark ({n} layers)",
+    "{n} réteg nem jelölhető meg, mert nem törölhető (a függő rétegekkel együtt a Lánc kijelölése segít).":
+        "{n} layer(s) cannot be marked because they cannot be removed (Select chain removes them together "
+        "with their dependent layers).",
 }

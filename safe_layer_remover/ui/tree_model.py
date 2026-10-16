@@ -213,6 +213,11 @@ class LayerTreeModel(QStandardItemModel):
         ids = [lid for lid, item in self._layer_items.items() if item.data(REMOVABLE_ROLE)]
         self.set_checked(ids, True)
 
+    def check_all_untouched(self) -> None:
+        """Check every layer whose removal affects nothing at all."""
+        ids = [lid for lid, item in self._layer_items.items() if item.data(UNTOUCHED_ROLE)]
+        self.set_checked(ids, True)
+
     def clear_checks(self) -> None:
         self.set_checked([], True, exclusive=True)
 
