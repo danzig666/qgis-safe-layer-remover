@@ -83,6 +83,20 @@ class DetectorTest(unittest.TestCase):
         dep = [d for d in r.infos[b.id()].reasons if d.kind == DepKind.VIRTUAL_LAYER][0]
         self.assertIn(dep.certainty, (Certainty.MEDIUM, Certainty.HIGH))
 
+    def test_virtual_query_by_layer_id(self):
+        for name in ("Telkek", "2026 terv"):
+            new_project()
+            b = mk(name)
+            # bare identifiers cannot start with a digit in SQL, so those ids are quoted
+            ref = b.id() if b.id()[0].isalpha() else f'"{b.id()}"'
+            v = QgsVectorLayer(f"?query=SELECT * FROM {ref}", "V", "virtual")
+            self.assertTrue(v.isValid())
+            QgsProject.instance().addMapLayer(v)
+            r = analyze()
+            self.assertEqual(r.infos[b.id()].status, Status.BLOCKED, name)
+            dep = [d for d in r.infos[b.id()].reasons if d.dependent_id == v.id()][0]
+            self.assertEqual(dep.kind, DepKind.VIRTUAL_LAYER)
+
     def test_virtual_query_ambiguous_name(self):
         b1 = mk("Parcellak")
         v = QgsVectorLayer("?query=SELECT * FROM Parcellak", "V", "virtual")
