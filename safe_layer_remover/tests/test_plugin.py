@@ -48,6 +48,34 @@ class PluginTest(unittest.TestCase):
         finally:
             plugin.unload()
 
+    def test_untouched_filter(self):
+        from qgis.core import QgsVectorLayer
+        from safe_layer_remover import classFactory
+        from safe_layer_remover.ui.dock import UNTOUCHED
+        from safe_layer_remover.ui.tree_model import LAYER_ID_ROLE
+
+        iface, _window = make_iface()
+        plugin = classFactory(iface)
+        plugin.initGui()
+        try:
+            free = QgsVectorLayer("?query=SELECT 1 AS id", "free", "virtual")
+            QgsProject.instance().addMapLayer(free)
+            a, b = mk("A"), mk("B")
+            add_join(a, b)
+            win = plugin.dock
+            win.refresh()
+            idx = [i for i, (_l, v) in enumerate(win._status_filters) if v == UNTOUCHED][0]
+            win.status_combo.setCurrentIndex(idx)
+            self.assertIn("(1)", win.status_combo.itemText(idx))
+            visible = []
+            for row in range(win.proxy.rowCount()):
+                visible.append(win.proxy.index(row, 0).data(LAYER_ID_ROLE))
+            self.assertEqual(visible, [free.id()])
+            win.status_combo.setCurrentIndex(0)
+            self.assertEqual(win.proxy.rowCount(), 3)
+        finally:
+            plugin.unload()
+
     def test_sentinel_snapshots_unsafe_native_removal(self):
         from safe_layer_remover import classFactory
 

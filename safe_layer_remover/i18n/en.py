@@ -333,6 +333,11 @@ EN: dict[str, str] = {
     "Minden állapot": "All statuses",
     "Csak törölhetők": "Removable only",
     "Csak nem törölhetők": "Not removable only",
+    "Csak érintetlenek": "Untouched only",
+    "Csak érintetlenek ({n})": "Untouched only ({n})",
+    "Csak azok a rétegek, amelyek törlése semmit nem érint: nem függ tőlük réteg, nincs figyelmeztetésük, és nem szerepelnek elrendezésen vagy térképtémában.":
+        "Only layers whose removal affects nothing: no layer depends on them, they have no warning, "
+        "and they are not on a layout or in a map theme.",
     "Frissítés (F5)": "Refresh (F5)",
     "Beállítások és riport": "Settings and report",
     "Beállítások…": "Settings…",

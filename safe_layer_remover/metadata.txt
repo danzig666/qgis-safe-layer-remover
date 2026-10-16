@@ -15,5 +15,6 @@ category=Layers
 tags=layers,remove,delete,dependencies,join,virtual layer,relations,cleanup
 experimental=False
 icon=icons/icon.png
-changelog=1.0.1 Map items that neither lock their layers nor follow a map theme no longer count as "on a layout".
+changelog=1.0.1 New "Untouched only" filter: layers whose removal affects nothing.
+ Map items that neither lock their layers nor follow a map theme no longer count as "on a layout".
  1.0.0 First release.

@@ -172,6 +172,18 @@ class LayerInfo:
     closure: frozenset[str] = frozenset()
     layout_uses: list[Dependency] = field(default_factory=list)  # layouts the layer appears on
 
+    @property
+    def untouched(self) -> bool:
+        """Removing the layer affects nothing: no dependent layer, no warning, no layout, no other project item."""
+        if self.status != Status.SAFE or self.layout_uses or self.result is None:
+            return False
+        r = self.result
+        if r.victims or r.blocking_objects or r.warnings:
+            return False
+        # notes about the layer's own references (broken / dynamic) do not affect anything else
+        own_notes = (DepKind.BROKEN_REFERENCE, DepKind.DYNAMIC_REFERENCE)
+        return not [d for d in r.infos if d.kind not in own_notes]
+
     def is_removable(self, uncertain_is_blocked: bool = True) -> bool:
         if self.status in (Status.SAFE, Status.WARN):
             return True

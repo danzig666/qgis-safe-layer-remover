@@ -21,6 +21,9 @@ layers whose removal doesn't break anything else.
 Indirect effects are followed too: if C uses A and A uses B, removing B breaks C. Several layers can be
 removed together when they only depend on each other ("Select chain").
 
+The "Untouched only" filter lists the layers you can drop without any side effect at all: nothing
+depends on them, they are not on a layout or in a map theme, and they hold no unsaved or in-memory data.
+
 ![Confirmation](docs/confirm.png)
 
 Removed layers go to a recycle bin and can be restored, memory layer data included. If you remove

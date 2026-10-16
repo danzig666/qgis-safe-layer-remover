@@ -8,7 +8,16 @@ from typing import Optional
 from qgis.PyQt.QtCore import QSortFilterProxyModel
 
 from ..core.model import Status
-from .tree_model import BADGES_ROLE, COL_NAME, COL_TYPE, IS_GROUP_ROLE, LAYOUTS_ROLE, SEARCH_ROLE, STATUS_ROLE
+from .tree_model import (
+    BADGES_ROLE,
+    COL_NAME,
+    COL_TYPE,
+    IS_GROUP_ROLE,
+    LAYOUTS_ROLE,
+    SEARCH_ROLE,
+    STATUS_ROLE,
+    UNTOUCHED_ROLE,
+)
 
 
 def normalize(text: str) -> str:
@@ -25,6 +34,7 @@ class LayerFilterProxy(QSortFilterProxyModel):
         self._types: Optional[set[str]] = None      # None = all types
         self._statuses: Optional[set[Status]] = None  # None = all statuses
         self._layout: Optional[str] = None            # "" = on any layout, name = on that layout
+        self._untouched = False                       # only layers whose removal affects nothing
 
     # ------------------------------------------------------------------
     def set_text(self, text: str) -> None:
@@ -43,12 +53,17 @@ class LayerFilterProxy(QSortFilterProxyModel):
         self._layout = layout
         self.invalidateFilter()
 
+    def set_untouched(self, only_untouched: bool) -> None:
+        self._untouched = bool(only_untouched)
+        self.invalidateFilter()
+
     @property
     def statuses(self) -> Optional[set[Status]]:
         return self._statuses
 
     def is_active(self) -> bool:
-        return bool(self._text) or self._types is not None or self._statuses is not None or self._layout is not None
+        return (bool(self._text) or self._types is not None or self._statuses is not None
+                or self._layout is not None or self._untouched)
 
     # ------------------------------------------------------------------
     def filterAcceptsRow(self, source_row, source_parent):  # noqa: N802 - Qt API
@@ -61,8 +76,9 @@ class LayerFilterProxy(QSortFilterProxyModel):
             # filtering keeps a group when one of its descendants matches
             if not self.is_active():
                 return True
-            return bool(self._text) and self._types is None and self._statuses is None and self._layout is None \
-                and self._text in normalize(idx.data(SEARCH_ROLE) or "")
+            return (bool(self._text) and self._types is None and self._statuses is None
+                    and self._layout is None and not self._untouched
+                    and self._text in normalize(idx.data(SEARCH_ROLE) or ""))
         if self._text and self._text not in normalize(idx.data(SEARCH_ROLE) or ""):
             return False
         if self._types is not None:
@@ -70,6 +86,8 @@ class LayerFilterProxy(QSortFilterProxyModel):
             primary = badges[0].text if badges else ""
             if primary not in self._types:
                 return False
+        if self._untouched and not idx.data(UNTOUCHED_ROLE):
+            return False
         if self._layout is not None:
             layouts = idx.data(LAYOUTS_ROLE) or []
             if not layouts or (self._layout and self._layout not in layouts):

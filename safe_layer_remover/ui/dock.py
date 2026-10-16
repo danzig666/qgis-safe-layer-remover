@@ -61,6 +61,7 @@ from .tree_model import (
 )
 
 _REMOVABLE = {Status.SAFE, Status.WARN}
+UNTOUCHED = "untouched"   # status combo entry: layers whose removal affects nothing
 _NOT_REMOVABLE = {Status.UNCERTAIN, Status.BLOCKED, Status.LOCKED, Status.ERROR}
 
 # counter buttons: (statuses, label)
@@ -145,6 +146,7 @@ class SafeLayerRemoverWindow(QWidget):
             (tr("Minden állapot"), None),
             (tr("Csak törölhetők"), _REMOVABLE),
             (tr("Csak nem törölhetők"), _NOT_REMOVABLE),
+            (tr("Csak érintetlenek"), UNTOUCHED),
         ] + [(status_label(s), {s}) for s in Status]
         for label, _ in self._status_filters:
             self.status_combo.addItem(label)
@@ -438,6 +440,14 @@ class SafeLayerRemoverWindow(QWidget):
             btn.setText(f"{n} {tr(label)}")
             btn.setVisible(n > 0 or statuses == {Status.SAFE})
             btn.setChecked(active is not None and set(active) == set(statuses))
+        n_untouched = sum(1 for info in self.analysis.infos.values() if info.untouched) if self.analysis else 0
+        for i, (_label, value) in enumerate(self._status_filters):
+            if value == UNTOUCHED:
+                self.status_combo.setItemText(i, tr("Csak érintetlenek ({n})").format(n=n_untouched))
+                self.status_combo.setItemData(
+                    i, tr("Csak azok a rétegek, amelyek törlése semmit nem érint: nem függ tőlük réteg, "
+                          "nincs figyelmeztetésük, és nem szerepelnek elrendezésen vagy térképtémában."),
+                    Qt.ItemDataRole.ToolTipRole)
 
     def _update_error_banner(self) -> None:
         a = self.analysis
@@ -529,7 +539,9 @@ class SafeLayerRemoverWindow(QWidget):
         self._restore_expansion()
 
     def _on_status_combo(self, index: int) -> None:
-        self.proxy.set_statuses(self._status_filters[index][1])
+        value = self._status_filters[index][1]
+        self.proxy.set_untouched(value == UNTOUCHED)
+        self.proxy.set_statuses(None if value == UNTOUCHED else value)
         self._update_counters()
         self._restore_expansion()
 
@@ -537,7 +549,7 @@ class SafeLayerRemoverWindow(QWidget):
         target = statuses if checked else None
         idx = 0
         for i, (_label, st) in enumerate(self._status_filters):
-            if st is not None and target is not None and set(st) == set(target):
+            if isinstance(st, set) and target is not None and set(st) == set(target):
                 idx = i
                 break
         if target is not None and idx == 0:
@@ -545,6 +557,7 @@ class SafeLayerRemoverWindow(QWidget):
             self.status_combo.blockSignals(True)
             self.status_combo.setCurrentIndex(0)
             self.status_combo.blockSignals(False)
+            self.proxy.set_untouched(False)
             self.proxy.set_statuses(target)
             self._update_counters()
             self._restore_expansion()

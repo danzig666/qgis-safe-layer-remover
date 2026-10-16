@@ -279,6 +279,40 @@ class DetectorTest(unittest.TestCase):
         self.assertEqual(r2.infos[a.id()].status, Status.BLOCKED)
         self.assertNotEqual(r2.infos[b.id()].status, Status.BLOCKED)
 
+    def test_untouched(self):
+        from qgis.core import QgsLayoutItemMap, QgsMapThemeCollection
+        project = QgsProject.instance()
+
+        def ogr_like(name):
+            # a non-memory layer (no data loss warning): a virtual layer without sources
+            lyr = QgsVectorLayer("?query=SELECT 1 AS id", name, "virtual")
+            self.assertTrue(lyr.isValid())
+            project.addMapLayer(lyr)
+            return lyr
+
+        free, used, on_layout, in_theme = ogr_like("free"), ogr_like("used"), ogr_like("layout"), ogr_like("theme")
+        mem = mk("mem")                                    # memory layer: data loss warning
+        dep = ogr_like("dep")
+        dep.setDependencies([QgsMapLayerDependency(used.id())])
+
+        layout = QgsPrintLayout(project)
+        layout.initializeDefaults()
+        layout.setName("L")
+        m = QgsLayoutItemMap(layout)
+        m.setKeepLayerSet(True)
+        m.setLayers([on_layout])
+        layout.addLayoutItem(m)
+        project.layoutManager().addLayout(layout)
+
+        state = QgsMapThemeCollection.MapThemeRecord()
+        state.setLayerRecords([QgsMapThemeCollection.MapThemeLayerRecord(in_theme)])
+        project.mapThemeCollection().insert("T", state)
+
+        r = analyze()
+        got = {r.infos[lyr.id()].name for lyr in (free, used, on_layout, in_theme, mem, dep)
+               if r.infos[lyr.id()].untouched}
+        self.assertEqual(got, {"free", "dep"})
+
     def test_memory_layer_warn(self):
         a = mk("A")
         r = analyze()
