@@ -58,11 +58,6 @@ class ProjectObjectDetector(BaseDetector):
                                         tr("az elrendezés beállításai hivatkoznak a rétegre"), Certainty.MEDIUM, lname))
         return out
 
-    @staticmethod
-    def _visible_in_tree(project, layer_id) -> bool:
-        node = project.layerTreeRoot().findLayer(layer_id)
-        return node is not None and node.isVisible()
-
     def _layout_items(self, layout, label, layout_sev, atlas_sev, project, ctx):
         out = []
         lname = layout.name()
@@ -87,13 +82,8 @@ class ProjectObjectDetector(BaseDetector):
                                 out.append(self._mk(lid, item_label, DepKind.LAYOUT, layout_sev,
                                                     tr("a térképelem a(z) „{t}” térképtémát követi").format(t=theme),
                                                     ref=lname))
-                else:
-                    # live map: shows the layers currently visible in the layer tree
-                    for lid in ctx.layers_by_id:
-                        if self._visible_in_tree(project, lid):
-                            out.append(self._mk(lid, item_label, DepKind.LAYOUT, Severity.INFO,
-                                                tr("élő térkép: a réteg jelenleg látható a rétegkezelőben"),
-                                                ref=lname))
+                # a live map (neither locked layers nor a followed theme) does not count:
+                # what it shows depends on the current layer tree visibility
             elif isinstance(item, qcore.QgsLayoutItemLegend):
                 if not item.autoUpdateModel():
                     try:

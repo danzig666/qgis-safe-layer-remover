@@ -164,7 +164,6 @@ EN: dict[str, str] = {
     "az elrendezés beállításai hivatkoznak a rétegre": "the layout settings reference the layer",
     "rögzített rétegkészlet": "locked layer set",
     "a térképelem a(z) „{t}” térképtémát követi": "the map item follows the map theme “{t}”",
-    "élő térkép: a réteg jelenleg látható a rétegkezelőben": "live map: the layer is currently visible in the Layers panel",
     "jelmagyarázat (kézzel szerkesztett)": "legend (manually edited)",
     "magassági profil": "elevation profile",
     "attribútumtábla": "attribute table",

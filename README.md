@@ -14,8 +14,8 @@ layers whose removal doesn't break anything else.
   relation reference widgets, layer dependencies, group layers
 - expressions that point to other layers (`get_feature`, `aggregate`, `overlay_*`, …) in expression
   fields, defaults, constraints, map tips, actions, symbology and labels
-- print layouts: locked layer sets, maps following a map theme, live maps, legends, attribute tables,
-  atlas coverage
+- print layouts: locked layer sets, maps following a map theme, legends, attribute tables, atlas
+  coverage
 - memory layers (data loss) and unsaved edits
 
 Indirect effects are followed too: if C uses A and A uses B, removing B breaks C. Several layers can be

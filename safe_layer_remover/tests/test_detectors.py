@@ -267,14 +267,14 @@ class DetectorTest(unittest.TestCase):
 
         r = analyze()
         on = lambda lid: sorted({d.object_ref for d in r.infos[lid].layout_uses})  # noqa: E731
-        self.assertEqual(on(a.id()), ["Témás", "Élő"] if False else sorted(["Témás", "Élő"]))
-        self.assertEqual(on(b.id()), ["Élő"])
+        # only the theme-following map counts; a live map does not put layers on the layout
+        self.assertEqual(on(a.id()), ["Témás"])
+        self.assertEqual(on(b.id()), [])
         self.assertEqual(on(c.id()), [])
-        self.assertTrue(any(bd.text.startswith("Elrendezésen (2)") for bd in r.infos[a.id()].badges))
-        # theme-following map: warning; live map: informative only
+        self.assertTrue(any(bd.text.startswith("Elrendezésen (1)") for bd in r.infos[a.id()].badges))
+        self.assertFalse(any(bd.text.startswith("Elrendezésen") for bd in r.infos[b.id()].badges))
         self.assertIn(DepKind.LAYOUT, {d.kind for d in r.infos[a.id()].reasons})
         self.assertEqual(r.infos[b.id()].status, Status.WARN)  # memory warning only
-        self.assertFalse(any(d.kind == DepKind.LAYOUT for d in r.infos[b.id()].result.warnings))
         r2 = analyze(block_on_layout=True)
         self.assertEqual(r2.infos[a.id()].status, Status.BLOCKED)
         self.assertNotEqual(r2.infos[b.id()].status, Status.BLOCKED)
