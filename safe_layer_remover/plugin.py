@@ -39,7 +39,7 @@ class SafeLayerRemoverPlugin:
         self.analyzer: Optional[DependencyAnalyzer] = None
         self.recycle_bin: Optional[RecycleBin] = None
         self.watcher: Optional[ProjectWatcher] = None
-        self._indicators: list = []
+        self._indicators: dict = {}   # (layer id, kind) -> (tree node, indicator, tooltip)
         self._clearing = False
         self._project_conns: list = []
         self._load_translation()
@@ -75,6 +75,8 @@ class SafeLayerRemoverPlugin:
         self.recycle_bin.start_tracking()
         self.watcher = ProjectWatcher()
         self.watcher.layerDirty.connect(self.analyzer.invalidate)
+        self.watcher.layerGone.connect(self.analyzer.forget)
+        self.watcher.dependenciesChanged.connect(self.analyzer.mark_stale)
 
         from .ui.dock import SafeLayerRemoverWindow
         # a separate (non dockable) window owned by the QGIS main window
@@ -197,7 +199,7 @@ class SafeLayerRemoverPlugin:
             self._remove_indicators()
             return
         try:
-            self._update_indicators(self.analyzer.run())
+            self._update_indicators()   # graph only: no full result needed for the markers
         except Exception as exc:  # noqa: BLE001
             log_warning(f"Background analysis failed: {exc}")
 
@@ -243,17 +245,43 @@ class SafeLayerRemoverPlugin:
 
     def _remove_indicators(self) -> None:
         view = self.iface.layerTreeView() if self.iface is not None else None
-        for node, indicator in self._indicators:
+        for node, indicator, _tip in self._indicators.values():
             try:
                 if view is not None:
                     view.removeIndicator(node, indicator)
             except Exception:  # noqa: BLE001 - node may already be deleted
                 pass
-        self._indicators = []
+        self._indicators = {}
 
-    def _update_indicators(self, analysis) -> None:
-        self._remove_indicators()
-        if not plugin_settings.get("show_tree_indicators") or analysis is None:
+    def _desired_indicators(self, graph, user_locked) -> dict:
+        """{(layer id, kind): tooltip} for the layers that need a marker."""
+        project = QgsProject.instance()
+
+        def name_of(lid):
+            lyr = project.mapLayer(lid)
+            return lyr.name() if lyr is not None else lid
+
+        desired = {}
+        for lid in user_locked:
+            desired[(lid, "lock")] = tr("Biztonságos rétegtörlés: saját zárolás, a réteg nem törölhető.")
+        for lid in graph.layer_ids:
+            if not graph.has_dependents(lid):
+                continue
+            res = graph.evaluate({lid})
+            if not res.victims:
+                continue
+            lines = [tr("Biztonságos rétegtörlés: más rétegek függenek ettől a rétegtől:")]
+            for victim in res.victims.values():
+                kinds = ", ".join(dict.fromkeys(kind_label(d.kind) for d in victim.chain[:1]))
+                prefix = "" if victim.direct else tr("közvetve, ")
+                lines.append(f"• {name_of(victim.layer_id)} ({prefix}{kinds})")
+            desired[(lid, "link")] = "\n".join(lines)
+        return desired
+
+    def _update_indicators(self, analysis=None) -> None:
+        """Bring the Layers panel markers in line with the analysis, touching only what changed."""
+        if not plugin_settings.get("show_tree_indicators"):
+            self._remove_indicators()
             return
         try:
             from qgis.gui import QgsLayerTreeViewIndicator
@@ -262,40 +290,46 @@ class SafeLayerRemoverPlugin:
         view = self.iface.layerTreeView()
         if view is None:
             return
-        icon = QgsApplication.getThemeIcon("/mIconDependencies.svg")
-        if icon.isNull():
-            icon = QgsApplication.getThemeIcon("/mActionLink.svg")
-        if icon.isNull():
-            from .ui.styles import status_icon
-            icon = status_icon(Status.BLOCKED)
+        if analysis is not None:
+            user_locked = {lid for lid, info in analysis.infos.items() if info.user_locked}
+            desired = self._desired_indicators(analysis.graph, user_locked)
+        else:
+            graph, user_locked = self.analyzer.graph_snapshot()
+            desired = self._desired_indicators(graph, user_locked)
+
         root = QgsProject.instance().layerTreeRoot()
+        # drop markers that are no longer wanted, or whose node changed (layer moved / removed)
+        for key, (node, indicator, tip) in list(self._indicators.items()):
+            current = root.findLayer(key[0])
+            if key not in desired or current is None or current is not node:
+                try:
+                    view.removeIndicator(node, indicator)
+                except Exception:  # noqa: BLE001 - node may already be deleted
+                    pass
+                del self._indicators[key]
+            elif desired[key] != tip:
+                indicator.setToolTip(desired[key])
+                self._indicators[key] = (node, indicator, desired[key])
+        if any(kind == "link" for _lid, kind in desired):
+            icon = QgsApplication.getThemeIcon("/mIconDependencies.svg")
+            if icon.isNull():
+                icon = QgsApplication.getThemeIcon("/mActionLink.svg")
+            if icon.isNull():
+                from .ui.styles import status_icon
+                icon = status_icon(Status.BLOCKED)
         from .ui.styles import status_icon
         lock_icon = status_icon(Status.LOCKED)
-        for lid, info in analysis.infos.items():
-            if info.user_locked:
-                node = root.findLayer(lid)
-                if node is not None:
-                    indicator = QgsLayerTreeViewIndicator(view)
-                    indicator.setIcon(lock_icon)
-                    indicator.setToolTip(tr("Biztonságos rétegtörlés: saját zárolás, a réteg nem törölhető."))
-                    view.addIndicator(node, indicator)
-                    self._indicators.append((node, indicator))
-            res = info.result
-            if res is None or not res.victims:
+        for key, tip in desired.items():
+            if key in self._indicators:
                 continue
-            node = root.findLayer(lid)
+            node = root.findLayer(key[0])
             if node is None:
                 continue
-            lines = [tr("Biztonságos rétegtörlés: más rétegek függenek ettől a rétegtől:")]
-            for victim in res.victims.values():
-                kinds = ", ".join(dict.fromkeys(kind_label(d.kind) for d in victim.chain[:1]))
-                prefix = "" if victim.direct else tr("közvetve, ")
-                lines.append(f"• {analysis.name_of(victim.layer_id)} ({prefix}{kinds})")
             indicator = QgsLayerTreeViewIndicator(view)
-            indicator.setIcon(icon)
-            indicator.setToolTip("\n".join(lines))
+            indicator.setIcon(lock_icon if key[1] == "lock" else icon)
+            indicator.setToolTip(tip)
             view.addIndicator(node, indicator)
-            self._indicators.append((node, indicator))
+            self._indicators[key] = (node, indicator, tip)
 
     # ------------------------------------------------------------------ sentinel mode
     def _on_layers_will_be_removed(self, items) -> None:
@@ -312,15 +346,21 @@ class SafeLayerRemoverPlugin:
         names = {i: (project.mapLayer(i).name() if project.mapLayer(i) is not None else i) for i in ids}
         broken: list[str] = []
         user_locked = [i for i in ids if i in locks.locked_ids()]
-        if sentinel and (user_locked or self.analyzer.may_be_referenced(ids)):
-            # something may refer to these layers: full analysis on the (change tracked) caches
+        if sentinel:
             try:
-                analysis = self.analyzer.run()
-                res = analysis.evaluate(set(ids))
-                for v in res.victims.values():
-                    broken.append(f"{analysis.name_of(v.layer_id)} ({kind_label(v.chain[-1].kind)})")
-                for d in res.blocking_objects:
-                    broken.append(f"{d.dependent_label} ({kind_label(d.kind)})")
+                # 1. the last collected dependencies, when nothing relevant changed since (instant)
+                res = self.analyzer.evaluate_if_fresh(ids)
+                # 2. otherwise a quick text check, and the full analysis only if it finds a reference
+                if res is None and (user_locked or self.analyzer.may_be_referenced(ids)):
+                    res = self.analyzer.run().evaluate(set(ids))
+                if res is not None:
+                    def name_of(lid):
+                        lyr = project.mapLayer(lid)
+                        return lyr.name() if lyr is not None else lid
+                    for v in res.victims.values():
+                        broken.append(f"{name_of(v.layer_id)} ({kind_label(v.chain[-1].kind)})")
+                    for d in res.blocking_objects:
+                        broken.append(f"{d.dependent_label} ({kind_label(d.kind)})")
             except Exception as exc:  # noqa: BLE001
                 log_warning(f"Sentinel analysis failed: {exc}")
         problem = bool(broken or user_locked)

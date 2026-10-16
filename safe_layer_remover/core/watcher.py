@@ -17,7 +17,9 @@ class ProjectWatcher(QObject):
     """
 
     changed = pyqtSignal()
-    layerDirty = pyqtSignal(str)
+    layerDirty = pyqtSignal(str)          # a layer was added or changed: its cached analysis is outdated
+    layerGone = pyqtSignal(str)           # a layer was removed: drop its caches (nothing new to analyse)
+    dependenciesChanged = pyqtSignal()    # project level change that can add or alter a dependency
     projectReset = pyqtSignal()
 
     def __init__(self, project: Optional[QgsProject] = None, parent: Optional[QObject] = None):
@@ -32,6 +34,9 @@ class ProjectWatcher(QObject):
         self._layer_conns: dict[str, list] = {}
         self._active = False
         self.suspended = False
+        self._removing = False
+        self._removal_seen = False
+        self._dep_change_pending = False
 
     @property
     def project(self) -> QgsProject:
@@ -64,12 +69,19 @@ class ProjectWatcher(QObject):
         for sig in ("addedChildren", "removedChildren", "nameChanged", "visibilityChanged"):
             if hasattr(root, sig):
                 self._connect(c, getattr(root, sig), self.touch)
-        self._connect(c, p.relationManager().changed, self.touch)
+        self._connect(c, p.relationManager().changed, self._dependencies_changed)
         lm = p.layoutManager()
         for sig in ("layoutAdded", "layoutRemoved", "layoutRenamed"):
             if hasattr(lm, sig):
-                self._connect(c, getattr(lm, sig), self.touch)
-        self._connect(c, p.mapThemeCollection().mapThemesChanged, self.touch)
+                self._connect(c, getattr(lm, sig), self._dependencies_changed)
+        self._connect(c, p.mapThemeCollection().mapThemesChanged, self._dependencies_changed)
+        for sig in ("snappingConfigChanged", "avoidIntersectionsLayersChanged"):
+            if hasattr(p, sig):
+                self._connect(c, getattr(p, sig), self._dependencies_changed)
+        try:
+            self._connect(c, p.elevationProperties().changed, self._dependencies_changed)
+        except AttributeError:
+            pass
 
     def start(self) -> None:
         if self._active:
@@ -127,6 +139,8 @@ class ProjectWatcher(QObject):
         # helper layers that plugins add and remove in a loop should not start an analysis
 
     def _on_layers_will_be_removed(self, items) -> None:
+        self._removing = True
+        self._removal_seen = True
         for item in items:
             self._unwatch_layer(item if isinstance(item, str) else item.id())
 
@@ -135,7 +149,9 @@ class ProjectWatcher(QObject):
             store = self._layer_conns.pop(lid, None)
             if store:
                 self._disconnect_all(store)  # safe: handle based
-            self.layerDirty.emit(lid)
+            self.layerGone.emit(lid)   # removing a layer never creates a dependency
+        # side effect signals of the removal may still follow in this event loop iteration
+        QTimer.singleShot(0, self._removal_done)
         # no touch() here either, see _on_layers_added
 
     def _on_reset(self, *args) -> None:
@@ -149,7 +165,27 @@ class ProjectWatcher(QObject):
         for layer in self.project.mapLayers().values():
             self._watch_layer(layer)
         self.projectReset.emit()
+        self.dependenciesChanged.emit()   # immediate: a new project is always a new analysis
         self.touch()
+
+    def _removal_done(self) -> None:
+        self._removing = False
+
+    def _dependencies_changed(self, *args) -> None:
+        # QGIS itself updates snapping, map themes and relations while it removes a layer (often
+        # before our layersWillBeRemoved slot runs). Those updates only drop references, so the
+        # decision is taken at the end of the event loop iteration, once we know about the removal.
+        if not self._dep_change_pending:
+            self._dep_change_pending = True
+            QTimer.singleShot(0, self._flush_dependency_change)
+        self.touch()
+
+    def _flush_dependency_change(self) -> None:
+        pending, removal = self._dep_change_pending, self._removal_seen
+        self._dep_change_pending = False
+        self._removal_seen = False
+        if pending and not removal:
+            self.dependenciesChanged.emit()
 
     def _mark_dirty(self, lid: str) -> None:
         self.layerDirty.emit(lid)

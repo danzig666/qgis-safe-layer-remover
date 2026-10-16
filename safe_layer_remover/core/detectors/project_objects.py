@@ -54,7 +54,7 @@ class ProjectObjectDetector(BaseDetector):
             out.extend(found)
             # safety net: ids in the layout XML that were not explained above
             known = {d.required_id for d in found}
-            for lid in self._xml_ids(layout, ctx):
+            for lid in self._cached_xml_ids(layout, ctx):
                 if lid not in known:
                     out.append(self._mk(lid, label, DepKind.LAYOUT, layout_sev,
                                         tr("az elrendezés beállításai hivatkoznak a rétegre"), Certainty.MEDIUM, lname))
@@ -135,7 +135,42 @@ class ProjectObjectDetector(BaseDetector):
         return out
 
     @staticmethod
+    def _layout_signature(layout) -> tuple:
+        """Changes whenever the layout is edited (designer edits go through its undo stack)."""
+        parts: list = [layout.name()]
+        try:
+            stack = layout.undoStack().stack()
+            parts += [stack.index(), stack.count()]
+        except Exception:  # noqa: BLE001
+            parts.append(None)
+        for attr in ("items", "multiFrames"):
+            try:
+                parts.append(len(getattr(layout, attr)()))
+            except Exception:  # noqa: BLE001
+                parts.append(None)
+        try:
+            atlas = layout.atlas()
+            cov = atlas.coverageLayer() if atlas is not None else None
+            parts.append((atlas.enabled(), cov.id() if cov is not None else None) if atlas is not None else None)
+        except Exception:  # noqa: BLE001
+            parts.append(None)
+        return tuple(parts)
+
+    def _cached_xml_ids(self, layout, ctx) -> set[str]:
+        name = layout.name()
+        signature = self._layout_signature(layout)
+        cached = ctx.layout_cache.get(name)
+        if cached is None or cached[0] != signature:
+            cached = (signature, frozenset(self._xml_tokens(layout)))
+            ctx.layout_cache[name] = cached
+        return set(cached[1] & ctx.layers_by_id.keys())
+
+    @staticmethod
     def _xml_ids(layout, ctx) -> set[str]:
+        return ProjectObjectDetector._xml_tokens(layout) & set(ctx.layers_by_id)
+
+    @staticmethod
+    def _xml_tokens(layout) -> set[str]:
         """Layer ids in the layout XML outside the parts analysed above.
 
         Skipped: custom properties (other plugins often store whole layer lists there), and the
@@ -147,14 +182,12 @@ class ProjectObjectDetector(BaseDetector):
         try:
             root = ET.fromstring(doc.toString().encode("utf-8"))
         except ET.ParseError:
-            tokens = set(_TOKEN_RE.findall(doc.toString()))
-            return tokens & set(ctx.layers_by_id)
+            return set(_TOKEN_RE.findall(doc.toString()))
         skip_types = set()
         for name in ("LayoutMap", "LayoutLegend", "LayoutElevationProfile"):
             value = getattr(QgsLayoutItemRegistry.ItemType, name, None)
             if value is not None:
                 skip_types.add(str(int(value)))
-        ids = set(ctx.layers_by_id)
         found: set[str] = set()
 
         def visit(node):
@@ -164,7 +197,7 @@ class ProjectObjectDetector(BaseDetector):
                 return
             for value in list(node.attrib.values()) + [node.text or ""]:
                 if value:
-                    found.update(set(_TOKEN_RE.findall(value)) & ids)
+                    found.update(_TOKEN_RE.findall(value))
             for child in node:
                 visit(child)
 

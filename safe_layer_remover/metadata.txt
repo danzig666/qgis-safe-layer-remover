@@ -5,7 +5,7 @@ qgisMaximumVersion=4.99
 supportsQt6=True
 description=Remove layers from the project without breaking any other layer. / Rétegek törlése a projektből úgy, hogy egyetlen más réteg se romoljon el.
 about=Maps the dependencies between layers (joins, virtual layers, relations, value relations, expressions, group layers, print layouts etc.), marks layers that cannot be removed safely in red together with the reason, and only allows removing safe layers, with a recycle bin and undo. English and Hungarian user interface (follows the QGIS language). / Feltérképezi a rétegek közötti függőségeket (join, virtuális réteg, kapcsolat, értékreláció, kifejezések, csoportréteg stb.), pirossal jelöli a nem törölhető rétegeket az okkal együtt, és csak a biztonságos rétegek csoportos törlését engedi. Lomtárral és visszavonással.
-version=1.2.1
+version=1.2.2
 author=Danzig
 email=5346511+danzig666@users.noreply.github.com
 homepage=https://github.com/danzig666/qgis-safe-layer-remover
@@ -15,7 +15,8 @@ category=Layers
 tags=layers,remove,delete,dependencies,join,virtual layer,relations,cleanup
 experimental=False
 icon=icons/icon.png
-changelog=1.2.1 Much faster layer removal: the sentinel no longer runs a full analysis for every removal (about 1.9 s -> 0.02 s per removal in a 380 layer project); helper layers never shown in the Layers panel are ignored; faster analysis through per-layer caches.
+changelog=1.2.2 Removing layers in the Layers panel is no longer slowed down by the plugin: dependencies are collected only when something relevant changes (a removal reuses the last result), layout XML is cached, the Layers panel markers are updated in place.
+ 1.2.1 Much faster layer removal: the sentinel no longer runs a full analysis for every removal (about 1.9 s -> 0.02 s per removal in a 380 layer project); helper layers never shown in the Layers panel are ignored; faster analysis through per-layer caches.
  1.2.0 Optional undo for every layer removal (also from the Layers panel); undo restores the original layer id, tree position, joins, relations, map themes and layout maps. Recycle bin limits. Mark / unmark several layers for removal from the context menu. "Select all" picks untouched layers only. Wider name column, window can't be minimized.
  1.1.0 Personal layer locks: lock / unlock layers (several at once) so they cannot be removed; padlock icon in the list and in the Layers panel.
  1.0.2 Manually edited legends and layout custom properties no longer mark every layer as being on a layout.

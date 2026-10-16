@@ -138,7 +138,11 @@ class RecycleBin(QObject):
         # tracking (filled while QGIS is about to remove things)
         self._pending_positions: dict[str, tuple[list[str], int, bool]] = {}
         self._theme_cache: dict[str, list[tuple[str, dict]]] = {}
-        self._theme_cache_dirty = True
+        self._theme_cache_dirty = False
+        self.theme_cache_delay_ms = 1500
+        self._theme_timer = QTimer(self)
+        self._theme_timer.setSingleShot(True)
+        self._theme_timer.timeout.connect(self._rebuild_theme_cache)
         self._conns: list = []
 
     @property
@@ -198,7 +202,8 @@ class RecycleBin(QObject):
     def _invalidate_theme_cache(self, *args) -> None:
         # rebuilt lazily outside the removal: reading theme records while QGIS removes a layer is unsafe
         self._theme_cache_dirty = True
-        QTimer.singleShot(0, self._rebuild_theme_cache)
+        # rebuilt when the project has been quiet for a moment (several changes, one rebuild)
+        self._theme_timer.start(self.theme_cache_delay_ms)
 
     def _rebuild_theme_cache(self) -> None:
         if not self._theme_cache_dirty:

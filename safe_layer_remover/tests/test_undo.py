@@ -32,6 +32,7 @@ def start_plugin(**settings):
     iface, window = make_iface()
     plugin = classFactory(iface)
     plugin.initGui()
+    plugin.recycle_bin.theme_cache_delay_ms = 0   # tests process events right away
     plugin._keep = window  # noqa: SLF001 - keep the main window alive
     return plugin
 
@@ -184,6 +185,30 @@ class FastPathTest(unittest.TestCase):
         QgsProject.instance().addMapLayer(v)
         an.invalidate()
         self.assertTrue(an.may_be_referenced([free.id()]))     # referenced by name in a virtual layer query
+
+    def test_removal_reuses_collected_dependencies(self):
+        from safe_layer_remover.core.model import Status
+        plugin = start_plugin()
+        try:
+            an = plugin.analyzer
+            a, b, c = mk("A"), mk("B"), mk("C")
+            add_join(a, b)                               # A depends on B
+            QApplication.processEvents()
+            self.assertEqual(an.run().infos[b.id()].status, Status.BLOCKED)
+            collected = an._collected                    # noqa: SLF001
+            QgsProject.instance().removeMapLayer(a.id())
+            r = an.run()
+            self.assertIs(an._collected, collected, "a removal must not trigger a new collection")  # noqa: SLF001
+            self.assertNotEqual(r.infos[b.id()].status, Status.BLOCKED)
+            add_join(c, b)                               # a new dependency: collected again
+            QApplication.processEvents()
+            r = an.run()
+            self.assertIsNot(an._collected, collected)   # noqa: SLF001
+            self.assertEqual(r.infos[b.id()].status, Status.BLOCKED)
+            self.assertIsNotNone(an.evaluate_if_fresh([b.id()]))
+            self.assertTrue(an.evaluate_if_fresh([b.id()]).blocked)
+        finally:
+            plugin.unload()
 
     def test_helper_layers_are_not_snapshotted(self):
         plugin = start_plugin(undo_all_removals=True)

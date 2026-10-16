@@ -39,6 +39,7 @@ class AnalysisContext:
         iface: Any = None,
         xml_cache: Optional[dict[str, str]] = None,
         derived_cache: Optional[dict[str, dict]] = None,
+        layout_cache: Optional[dict] = None,
     ):
         self.project = project
         self.iface = iface
@@ -56,6 +57,8 @@ class AnalysisContext:
         self.xml_cache: dict[str, str] = xml_cache if xml_cache is not None else {}
         # values computed from a layer's XML (tokens, parsed expressions ...), dropped with the XML
         self.derived_cache: dict[str, dict] = derived_cache if derived_cache is not None else {}
+        # layout name -> (signature, tokens of the layout XML): rebuilding it is the slowest part
+        self.layout_cache: dict = layout_cache if layout_cache is not None else {}
         self.dependencies: list[Dependency] = []
         self.covered_pairs: set[tuple[Optional[str], str]] = set()
         self.errors: dict[str, list[str]] = defaultdict(list)

@@ -65,9 +65,8 @@ class LayerRemover:
         return self._project or QgsProject.instance()
 
     def recheck(self, layer_ids) -> tuple[bool, SetResult, AnalysisResult]:
-        """Run a fresh analysis (no XML cache) and evaluate the set."""
-        self.analyzer.invalidate()
-        analysis = self.analyzer.run()
+        """Collect the dependencies again (the per-layer caches follow the layer changes) and evaluate."""
+        analysis = self.analyzer.run(force=True)
         res = analysis.evaluate(set(layer_ids))
         return res.is_safe(analysis.settings.get("uncertain_is_blocked", True)), res, analysis
 

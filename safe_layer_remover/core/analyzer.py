@@ -87,6 +87,9 @@ class DependencyAnalyzer:
         self.detector_classes = list(detectors) if detectors is not None else list(ALL_DETECTORS)
         self.xml_cache: dict[str, str] = {}
         self.derived_cache: dict[str, dict] = {}
+        self.layout_cache: dict = {}
+        self._collected: Optional[dict] = None   # result of the last full detector run
+        self._stale = True
         self.last_result: Optional[AnalysisResult] = None
 
     @property
@@ -100,9 +103,11 @@ class DependencyAnalyzer:
         return values
 
     def invalidate(self, layer_id: Optional[str] = None) -> None:
+        self._stale = True
         if layer_id is None:
             self.xml_cache.clear()
             self.derived_cache.clear()
+            self.layout_cache.clear()
         else:
             self.xml_cache.pop(layer_id, None)
             self.derived_cache.pop(layer_id, None)
@@ -149,21 +154,43 @@ class DependencyAnalyzer:
                 return True
         return False
 
-    def run(self) -> AnalysisResult:
-        t0 = time.perf_counter()
-        project = self.project
-        settings = self.settings()
-        # drop cache entries of layers that are gone
-        current = set(project.mapLayers().keys())
-        for lid in list(self.xml_cache):
-            if lid not in current:
-                del self.xml_cache[lid]
-        for lid in list(self.derived_cache):
-            if lid not in current:
-                del self.derived_cache[lid]
+    def forget(self, layer_id: str) -> None:
+        """A layer was removed: drop its caches. The collected dependencies stay valid."""
+        self.xml_cache.pop(layer_id, None)
+        self.derived_cache.pop(layer_id, None)
 
+    def mark_stale(self) -> None:
+        """Something that can add or change a dependency happened: collect again on the next run."""
+        self._stale = True
+
+    @staticmethod
+    def _layouts_signature(project: QgsProject) -> tuple:
+        """Cheap fingerprint of all layouts; designer edits change it (layouts have no change signal)."""
+        from .detectors.project_objects import ProjectObjectDetector
+        try:
+            return tuple(ProjectObjectDetector._layout_signature(lay)  # noqa: SLF001
+                         for lay in project.layoutManager().layouts())
+        except Exception:  # noqa: BLE001
+            return (object(),)   # never equal: forces a new collection
+
+    def _needs_collect(self, project: QgsProject, settings: dict, layout_sig: tuple) -> bool:
+        last = self._collected
+        if self._stale or last is None:
+            return True
+        if last["settings"] != settings or last["layout_sig"] != layout_sig:
+            return True
+        # a layer that appeared without us noticing could refer to anything
+        return not set(project.mapLayers().keys()) <= last["layer_ids"]
+
+    def _collect(self, project: QgsProject, settings: dict, layout_sig: tuple) -> None:
+        """The expensive part: run every detector on every layer."""
+        current = set(project.mapLayers().keys())
+        for cache in (self.xml_cache, self.derived_cache):
+            for lid in list(cache):
+                if lid not in current:
+                    del cache[lid]
         ctx = AnalysisContext(project, settings=settings, iface=self.iface, xml_cache=self.xml_cache,
-                              derived_cache=self.derived_cache)
+                              derived_cache=self.derived_cache, layout_cache=self.layout_cache)
         for cls in self.detector_classes:
             detector = cls()
             try:
@@ -172,35 +199,91 @@ class DependencyAnalyzer:
                 ctx.record_error(None, getattr(detector, "name", cls.__name__), exc)
                 continue
             ctx.register(deps)
+        self._collected = {
+            "dependencies": list(dict.fromkeys(ctx.dependencies)),   # deduplicated
+            "errors": {k: list(v) for k, v in ctx.errors.items()},
+            "global_errors": list(ctx.global_errors),
+            "settings": dict(settings),
+            "layout_sig": layout_sig,
+            "layer_ids": current,
+        }
+        self._stale = False
 
-        # deduplicate identical findings
-        unique: list[Dependency] = list(dict.fromkeys(ctx.dependencies))
+    def _current_graph(self, project: QgsProject):
+        """Graph of the last collection, restricted to the layers that still exist.
 
-        user_locked = user_locked_ids(project) & set(ctx.layers_by_id)
-        locked = {lid for lid, lyr in ctx.layers_by_id.items() if is_locked(lyr, project)} | user_locked
-        error_ids = set(ctx.errors.keys())
-        if ctx.global_errors:
-            error_ids |= set(ctx.layers_by_id)
-        graph = DependencyGraph(unique, ctx.layers_by_id.keys(), locked, error_ids)
+        Removing layers never creates a new reference, so dropping the removed layers from the last
+        collection gives the same answer as a new collection.
+        """
+        col = self._collected
+        layers = project.mapLayers()
+        ids = set(layers.keys())
+        deps = [d for d in col["dependencies"]
+                if d.required_id in ids and (d.dependent_id is None or d.dependent_id in ids)]
+        errors = {k: v for k, v in col["errors"].items() if k in ids}
+        user_locked = user_locked_ids(project) & ids
+        locked = {lid for lid, lyr in layers.items() if is_locked(lyr, project)} | user_locked
+        error_ids = set(errors.keys())
+        if col["global_errors"]:
+            error_ids |= ids
+        return DependencyGraph(deps, ids, locked, error_ids), deps, errors, user_locked
+
+    def graph_snapshot(self):
+        """(graph, user locked ids) for the current project, collecting only when needed.
+
+        Much cheaper than run(): no per-layer badges, closures or explanations.
+        """
+        project = self.project
+        settings = self.settings()
+        layout_sig = self._layouts_signature(project)
+        if self._needs_collect(project, settings, layout_sig):
+            self._collect(project, settings, layout_sig)
+        graph, _deps, _errors, user_locked = self._current_graph(project)
+        return graph, user_locked
+
+    def evaluate_if_fresh(self, layer_ids) -> Optional[SetResult]:
+        """Evaluate a removal set from the last collection, or None when that collection is outdated."""
+        project = self.project
+        settings = self.settings()
+        if self._needs_collect(project, settings, self._layouts_signature(project)):
+            return None
+        graph, _deps, _errors, _locked = self._current_graph(project)
+        res = graph.evaluate(set(layer_ids))
+        if self._collected["global_errors"]:
+            res.errors = sorted(set(res.errors) | set(res.members))
+        return res
+
+    def run(self, force: bool = False) -> AnalysisResult:
+        t0 = time.perf_counter()
+        project = self.project
+        settings = self.settings()
+        layout_sig = self._layouts_signature(project)
+        collected = force or self._needs_collect(project, settings, layout_sig)
+        if collected:
+            self._collect(project, settings, layout_sig)
+        col = self._collected
+        graph, unique, errors, user_locked = self._current_graph(project)
+        layers_by_id = project.mapLayers()
+        global_errors = col["global_errors"]
 
         result = AnalysisResult(
             infos={},
             graph=graph,
             dependencies=unique,
-            errors={k: list(v) for k, v in ctx.errors.items()},
-            global_errors=list(ctx.global_errors),
+            errors=errors,
+            global_errors=list(global_errors),
             settings=settings,
-            names={lid: lyr.name() for lid, lyr in ctx.layers_by_id.items()},
+            names={lid: lyr.name() for lid, lyr in layers_by_id.items()},
         )
 
-        for lid, layer in ctx.layers_by_id.items():
+        for lid, layer in layers_by_id.items():
             res = graph.evaluate({lid})
             status = res.status()
             error = None
-            if lid in ctx.errors:
-                error = "\n".join(ctx.errors[lid])
-            elif ctx.global_errors:
-                error = tr("A projektszintű elemzés sikertelen: {e}").format(e="; ".join(ctx.global_errors))
+            if lid in errors:
+                error = "\n".join(errors[lid])
+            elif global_errors:
+                error = tr("A projektszintű elemzés sikertelen: {e}").format(e="; ".join(global_errors))
             if error:
                 status = Status.ERROR
             reasons: list[Dependency] = []
@@ -236,5 +319,5 @@ class DependencyAnalyzer:
         result.duration = time.perf_counter() - t0
         self.last_result = result
         log_info(f"Analysis finished: {len(result.infos)} layers, {len(unique)} dependencies, "
-                 f"{result.duration * 1000:.0f} ms")
+                 f"{result.duration * 1000:.0f} ms" + ("" if collected else " (cached dependencies)"))
         return result
