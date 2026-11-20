@@ -293,9 +293,9 @@ class DetectorTest(unittest.TestCase):
         self.assertEqual(r2.infos[a.id()].status, Status.BLOCKED)
         self.assertNotEqual(r2.infos[b.id()].status, Status.BLOCKED)
 
-    def test_layout_legend_and_custom_properties_do_not_count(self):
+    def test_layout_legends_count_only_drawn_layers(self):
         from qgis.core import QgsLayoutItemLegend, QgsLayoutItemMap, QgsMapThemeCollection
-        a, b, c = mk("A"), mk("B"), mk("C")
+        a, b, c, d = mk("A"), mk("B"), mk("C"), mk("D")
         project = QgsProject.instance()
         state = QgsMapThemeCollection.MapThemeRecord()
         state.setLayerRecords([QgsMapThemeCollection.MapThemeLayerRecord(a)])
@@ -308,25 +308,31 @@ class DetectorTest(unittest.TestCase):
         themed.setFollowVisibilityPreset(True)
         themed.setFollowVisibilityPresetName("Csak A")
         layout.addLayoutItem(themed)
-        # manually edited legend linked to the themed map, holding every layer
+        # manually edited legend filtered by the themed map: only A is drawn
         linked = QgsLayoutItemLegend(layout)
         linked.setLinkedMap(themed)
         linked.setAutoUpdateModel(False)
+        linked.setLegendFilterByMapEnabled(True)
         layout.addLayoutItem(linked)
-        # manually edited legend without a map, holding every layer
+        # manually edited legend without a map: its tree holds every layer, only D is ticked
         loose = QgsLayoutItemLegend(layout)
         loose.setAutoUpdateModel(False)
         layout.addLayoutItem(loose)
+        for lyr in (a, b, c):
+            loose.model().rootGroup().findLayer(lyr.id()).setItemVisibilityChecked(False)
         # another plugin stores layer ids in the layout's custom properties
         layout.setCustomProperty("otherplugin/layers", [b.id(), c.id()])
         project.layoutManager().addLayout(layout)
 
         r = analyze()
-        self.assertEqual({d.object_ref for d in r.infos[a.id()].layout_uses}, {"Terv"})
-        self.assertEqual(r.infos[b.id()].layout_uses, [])
+        legend_of = lambda lid: {x.dependent_label for x in r.infos[lid].layout_uses  # noqa: E731
+                                 if x.detail == "szerepel a jelmagyarázatban"}
+        self.assertEqual({x.object_ref for x in r.infos[a.id()].layout_uses}, {"Terv"})
+        self.assertEqual(len(legend_of(a.id())), 1)             # only via the map-filtered legend
+        self.assertEqual(r.infos[b.id()].layout_uses, [])        # unticked in the legend, not on a map
         self.assertEqual(r.infos[c.id()].layout_uses, [])
-        details = {d.detail for d in r.infos[a.id()].layout_uses}
-        self.assertIn("jelmagyarázat (kézzel szerkesztett)", details)
+        self.assertEqual({x.object_ref for x in r.infos[d.id()].layout_uses}, {"Terv"})   # ticked legend entry
+        self.assertFalse(r.infos[d.id()].untouched)
 
     def test_untouched(self):
         from qgis.core import QgsLayoutItemMap, QgsMapThemeCollection

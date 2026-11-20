@@ -439,4 +439,5 @@ EN: dict[str, str] = {
     "{n} memóriaréteg adatai elvesznek (a mentés lent választható): {l}":
         "The data of {n} memory layer(s) is lost (saving can be chosen below): {l}",
     "{n} rétegen mentetlen szerkesztések vannak: {l}": "{n} layer(s) have unsaved edits: {l}",
+    "szerepel a jelmagyarázatban": "shown in the legend",
 }

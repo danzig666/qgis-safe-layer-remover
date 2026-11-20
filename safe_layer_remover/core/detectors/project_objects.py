@@ -95,22 +95,9 @@ class ProjectObjectDetector(BaseDetector):
         # 2. other items
         for item in items:
             if isinstance(item, qcore.QgsLayoutItemLegend):
-                # a legend never puts a layer on the layout by itself: a manually edited legend tree
-                # often holds the whole project. Only layers its linked (counted) map shows are listed.
-                if item.autoUpdateModel():
-                    continue
-                linked = item.linkedMap()
-                allowed = shown_by_map.get(linked.uuid(), set()) if linked is not None else set()
-                if not allowed:
-                    continue
-                try:
-                    ids = item.model().rootGroup().findLayerIds()
-                except Exception:  # noqa: BLE001
-                    ids = []
-                for lid in ids:
-                    if lid in allowed:
-                        out.append(self._mk(lid, item_label(item), DepKind.LAYOUT, layout_sev,
-                                            tr("jelmagyarázat (kézzel szerkesztett)"), ref=lname))
+                for lid in self._legend_layers(item, shown_by_map, ctx):
+                    out.append(self._mk(lid, item_label(item), DepKind.LAYOUT, layout_sev,
+                                        tr("szerepel a jelmagyarázatban"), ref=lname))
             elif hasattr(qcore, "QgsLayoutItemElevationProfile") and isinstance(item, qcore.QgsLayoutItemElevationProfile):
                 # VERIFY: QgsLayoutItemElevationProfile.layers() (QGIS >= 3.30)
                 if hasattr(item, "layers"):
@@ -133,6 +120,32 @@ class ProjectObjectDetector(BaseDetector):
                     out.append(self._mk(lyr.id(), label, DepKind.ATLAS, atlas_sev, tr("atlasz lefedő réteg"),
                                         ref=lname))
         return out
+
+    @staticmethod
+    def _legend_layers(item, shown_by_map: dict, ctx) -> set:
+        """Layers a legend item actually draws.
+
+        * A manually edited legend draws the *checked* layers of its own tree. Such trees often hold
+          the whole project with only a few layers ticked, so unticked ones do not count. When it
+          filters by a linked map that shows a fixed set (theme or locked layers), only layers in
+          both count.
+        * An automatically updated legend mirrors its linked map; it only counts when that map
+          follows a theme or has locked layers (a live legend follows the Layers panel, like a
+          live map, and is ignored).
+        """
+        linked = item.linkedMap()
+        map_set = shown_by_map.get(linked.uuid()) if linked is not None else None
+        if item.autoUpdateModel():
+            return set(map_set or ())
+        try:
+            checked = {node.layerId() for node in item.model().rootGroup().findLayers() if node.isVisible()}
+        except Exception:  # noqa: BLE001
+            return set()
+        checked &= set(ctx.layers_by_id)
+        filter_by_map = item.legendFilterByMapEnabled() if hasattr(item, "legendFilterByMapEnabled") else False
+        if filter_by_map and map_set:
+            checked &= map_set
+        return checked
 
     @staticmethod
     def _layout_signature(layout) -> tuple:
